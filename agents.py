@@ -1,6 +1,7 @@
 import gym
 import torch
 import torch.nn as nn
+import torch.optim as optim
 import torch.nn.functional as F
 
 from torch_utils import copy_parameters, sample_weighting_vector
@@ -16,12 +17,17 @@ class DiscreteMultivationSAC:
             reward_sources: List[RewardGenerator],
             memory: ReplayMemory,
             reward_decay: float = 0.99,
+            learning_rate: float = 0.003
         ):
         self.actor = actor
         self.local_critic_1 = critic_template()
         self.local_critic_2 = critic_template()
         self.target_critic_1 = critic_template()
         self.target_critic_2 = critic_template()
+        
+        self.actor_optimizer = optim.Adam(params=self.actor.parameters(), lr=learning_rate)
+        self.critic_1_optimizer = optim.Adam(params=self.local_critic_1.parameters(), lr=learning_rate)
+        self.critic_2_optimizer = optim.Adam(params=self.local_critic_2.parameters(), lr=learning_rate)
         
         self.reward_decay = reward_decay
         self.reward_sources = reward_sources
@@ -69,7 +75,6 @@ class DiscreteMultivationSAC:
             if steps_taken % update_interval == 0:
                 for i in range(update_steps):
                     self.learn(batch_size=batch_size)
-                    self.learn()
             
     def learn(self, batch_size: int = 64):
         """
@@ -78,6 +83,14 @@ class DiscreteMultivationSAC:
         2. Perform one gradient step on the policy to act better in the environment.
         3. Interpolate the target critics parameters towards the local critics using polyak averaging.
         """
+        # Sample batch and convert to PyTorch-Tensors
+        batch = self.memory.sample(batch_size)
+        # ToDo should this be done here?
+        states = torch.from_numpy(batch.states)
+        actions = torch.from_numpy(batch.actions)
+        next_states = torch.from_numpy(batch.next_states)
+        
+    def compute_critics_loss(self, states, actions, next_states, rewards, dones):
         pass
     
     def sample_actions(self, states: torch.FloatTensor, head_weightings: List[float]) -> torch.LongTensor:
