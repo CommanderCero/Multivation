@@ -36,14 +36,11 @@ class NHeadActor(nn.Module):
         self.body = body
         self.heads = heads
         
-    def forward(self, states):
+    def forward(self, states) -> torch.distributions.Categorical:
         embedded_states = self.body(states)
         logits = [head(embedded_states) for head in self.heads]
-        return torch.stack(logits, dim=0)
-    
-    def compute_action_probabilities(self, states):
-        logits = self.forward(states)
-        return F.softmax(logits, dim=2)
+        logits = torch.stack(logits, dim=0)
+        return torch.distributions.Categorical(logits)
     
     @property
     def num_heads(self):

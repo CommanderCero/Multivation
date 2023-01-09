@@ -6,18 +6,29 @@ import torch.nn.functional as F
 
 from torch_utils import copy_parameters, sample_weighting_vector
 from rewards import RewardGenerator
-from memory import ReplayMemory
+from memory import ReplayMemory, ExperienceBatch
+from models import NHeadActor, NHeadCritic
 
 from typing import List, Callable
 
+def compute_target_qvalues(data: ExperienceBatch, critic1: NHeadCritic, critic2: NHeadCritic, actor: NHeadActor):
+    with torch.no_grad():
+        critic1_next_state_qvalues = critic1(data.next_states)
+        critic2_next_state_qvalues = critic1(data.next_states)
+        next_state_qvalues = torch.min(critic1_next_state_qvalues, critic2_next_state_qvalues)
+        
+        next_action_dist = actor(data.next_states)
+        
+        
+
 class DiscreteMultivationSAC:
     def __init__(self, 
-            actor: nn.Module, 
-            critic_template: Callable[[], nn.Module], 
+            actor: NHeadActor, 
+            critic_template: Callable[[], NHeadCritic], 
             reward_sources: List[RewardGenerator],
             memory: ReplayMemory,
-            reward_decay: float = 0.99,
-            learning_rate: float = 0.003
+            reward_decay: float=0.99,
+            learning_rate: float=0.003
         ):
         self.actor = actor
         self.local_critic_1 = critic_template()
@@ -43,10 +54,10 @@ class DiscreteMultivationSAC:
     def train(self,
             env: gym.Env,
             total_steps: int,
-            initialisation_steps: int = 20000,
-            update_interval: int = 100,
-            batch_size: int = 64,
-            update_steps: int = 4,
+            initialisation_steps: int=20000,
+            update_interval: int=100,
+            batch_size: int=64,
+            update_steps: int=4,
         ):
         assert isinstance(env.action_space, gym.spaces.Discrete), "DiscreteMultivationSAC only supports environments with a discrete action space."
         
@@ -76,7 +87,7 @@ class DiscreteMultivationSAC:
                 for i in range(update_steps):
                     self.learn(batch_size=batch_size)
             
-    def learn(self, batch_size: int = 64):
+    def learn(self, batch_size: int=64):
         """
         Performs one update step. For this, we first sample from the ReplayMemory and then use the data to perform the following steps:
         1. Perform one gradient step on the local critics to better approximate the Q-function.
@@ -91,11 +102,12 @@ class DiscreteMultivationSAC:
         next_states = torch.from_numpy(batch.next_states)
         
     def compute_critics_loss(self, states, actions, next_states, rewards, dones):
-        pass
+        target_qvalues = compute_target_qvalues(None, self.target_critic_1, self.target_critic_2, self.actor)
     
     def sample_actions(self, states: torch.FloatTensor, head_weightings: List[float]) -> torch.LongTensor:
         with torch.no_grad():
-            head_probs = self.actor.compute_action_probabilities(states)
+            dist = self.actor(states)
+            head_probs = dist.probs
             
         # Combine probabilities using the weighting
         for i, weighting in enumerate(head_weightings):
