@@ -37,10 +37,14 @@ class NHeadActor(nn.Module):
         self.body = body
         self.heads = heads
         
-    def forward(self, states) -> torch.distributions.Categorical:
+    def forward(self, states):
         embedded_states = self.body(states)
         logits = [head(embedded_states) for head in self.heads]
         logits = torch.stack(logits, dim=0)
+        return logits
+    
+    def get_action_dist(self, states) -> torch.distributions.Categorical:
+        logits = self.forward(states)
         return torch.distributions.Categorical(logits=logits)
     
     @property
