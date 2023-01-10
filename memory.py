@@ -1,7 +1,9 @@
+import torch
+
 import gym
 import numpy as np
 
-from collections import namedtuple, deque
+from collections import namedtuple
 
 ExperienceBatch = namedtuple("ExperienceBatch", ["states", "actions", "next_states", "rewards", "dones"])
 
@@ -30,15 +32,15 @@ class ReplayMemory:
         self.current_pos = (self.current_pos + 1) % self.max_size
         self.size = min(self.size + 1, self.max_size)
         
-    def sample(self, batch_size: int) -> ExperienceBatch:
+    def sample(self, batch_size: int, device: torch.device) -> ExperienceBatch:
         indices = np.random.randint(0, self.size, size=batch_size)
         
         return ExperienceBatch(
-            states = self.states[indices],
-            actions = self.actions[indices],
-            next_states = self.next_states[indices],
-            dones = self.dones[indices],
-            rewards = self.rewards[indices]
+            states = torch.from_numpy(self.states[indices]).to(device),
+            actions = torch.from_numpy(self.actions[indices]).to(device),
+            next_states = torch.from_numpy(self.next_states[indices]).to(device),
+            dones = torch.from_numpy(self.dones[indices]).to(device),
+            rewards = torch.from_numpy(self.rewards[indices]).to(device)
         )
         
     def __len__(self):

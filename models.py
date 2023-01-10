@@ -17,6 +17,7 @@ class NHeadCritic(nn.Module):
     def forward(self, states):
         embedded_states = self.body(states)
         q_values = [head(embedded_states) for head in self.heads]
+        q_values = torch.stack(q_values, dim=0)
         return q_values
     
     @property
@@ -40,7 +41,7 @@ class NHeadActor(nn.Module):
         embedded_states = self.body(states)
         logits = [head(embedded_states) for head in self.heads]
         logits = torch.stack(logits, dim=0)
-        return torch.distributions.Categorical(logits)
+        return torch.distributions.Categorical(logits=logits)
     
     @property
     def num_heads(self):

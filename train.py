@@ -1,7 +1,7 @@
 import gym
 
 from models import NHeadActor, NHeadCritic
-from rewards import ExtrinsicRewardGenerator
+from rewards import ExtrinsicRewardGenerator, NegativeOneRewardGenerator
 from discrete_multivation_sac import DiscreteMultivationSAC
 from memory import ReplayMemory
 
@@ -20,7 +20,7 @@ if __name__ == "__main__":
     # Initialize Rewards
     reward_sources = [
         ExtrinsicRewardGenerator(),
-        ExtrinsicRewardGenerator()
+        NegativeOneRewardGenerator()
     ]
     
     # Initialize Agent

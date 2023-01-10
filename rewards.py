@@ -15,3 +15,10 @@ class ExtrinsicRewardGenerator(RewardGenerator):
     
     def generate_rewards(self, samples: ExperienceBatch) -> torch.Tensor:
         return samples.rewards
+    
+class NegativeOneRewardGenerator(RewardGenerator):
+    def __init__(self):
+        pass
+    
+    def generate_rewards(self, samples: ExperienceBatch) -> torch.Tensor:
+        return torch.full(samples.rewards.shape, -1)
