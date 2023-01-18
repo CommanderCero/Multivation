@@ -1,5 +1,7 @@
 import numpy as np
 import gym
+import time
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -50,6 +52,7 @@ class DiscreteMultivationSAC:
         self.polyak_weight = polyak_weight
         self.reward_decay = reward_decay
         self.total_steps = 0
+        self.total_updates = 0
         
         self.actor = actor.to(device)
         self.local_critic_1 = critic_template().to(device)
@@ -76,9 +79,15 @@ class DiscreteMultivationSAC:
             update_interval: int=100,
             batch_size: int=64,
             update_steps: int=4,
-            logger: torch.utils.tensorboard.SummaryWriter=None
+            logger: torch.utils.tensorboard.SummaryWriter=None,
+            logging_interval: int=4
         ):
         assert isinstance(env.action_space, gym.spaces.Discrete), "DiscreteMultivationSAC only supports environments with a discrete action space."
+        
+        episode_rewards = []
+        episode_lengths = []
+        reward_sum = 0
+        episode_length = 0
         
         steps_taken = 0
         head_weightings = sample_weighting_vector(self.num_heads)
@@ -95,25 +104,60 @@ class DiscreteMultivationSAC:
             self.memory.add(state, action, next_state, reward, done)
             state = next_state
             
+            # Update metrics
+            steps_taken += 1
+            self.total_steps += 1
+            episode_length += 1
+            reward_sum += reward
+            
+            # End of episode, reset episode specific variables
             if done:
                 state = env.reset()
                 head_weightings = sample_weighting_vector(self.num_heads)
-            
-            steps_taken += 1
-            self.total_steps += 1
+                
+                episode_rewards.append(reward_sum)
+                episode_lengths.append(episode_length)
+                reward_sum = 0
+                episode_length = 0
             
             # Learn
             if self.total_steps % update_interval == 0:
+                actor_losses = []
+                entropies = []
+                critic1_losses = []
+                critic2_losses = []
+                
                 for i in range(update_steps):
-                    self.learn(batch_size=batch_size, logger=logger)
+                    actor_loss, entropy, critic1_loss, critic2_loss = self.learn(batch_size=batch_size)
+                    self.total_updates += 1
                     
+                    actor_losses.append(actor_loss)
+                    entropies.append(entropy)
+                    critic1_losses.append(critic1_loss)
+                    critic2_losses.append(critic2_loss)
+                    
+                # Log training results
+                if logger:
+                    logger.add_scalar("learn/num_updates", self.total_updates, global_step=self.total_steps)
+                    logger.add_scalar("learn/actor_loss", np.mean(actor_losses), global_step=self.total_steps)
+                    logger.add_scalar("learn/actor_entropy", np.mean(entropies), global_step=self.total_steps)
+                    logger.add_scalar("learn/critic1_loss", np.mean(critic1_losses), global_step=self.total_steps)
+                    logger.add_scalar("learn/critic2_loss", np.mean(critic2_losses), global_step=self.total_steps)
+                    
+                    if len(episode_rewards) > 0:
+                        logger.add_scalar("rollout/episode_mean_reward", np.mean(episode_rewards), global_step=self.total_steps)
+                        logger.add_scalar("rollout/episode_mean_length", np.mean(episode_lengths), global_step=self.total_steps)
+                        episode_rewards.clear()
+                        episode_lengths.clear()
             
-    def learn(self, batch_size: int=64, logger=None):
+    def learn(self, batch_size: int=64):
         """
         Performs one update step. For this, we first sample from the ReplayMemory and then use the data to perform the following steps:
         1. Perform one gradient step on the local critics to better approximate the Q-function.
         2. Perform one gradient step on the policy to act better in the environment.
         3. Interpolate the target critics parameters towards the local critics using polyak averaging.
+        
+        Returns a tuple containing (actor_loss, entropy, critic1_loss, critic2_loss)
         """
         # Sample training data
         batch = self.memory.sample(batch_size, device=self.device)
@@ -168,12 +212,7 @@ class DiscreteMultivationSAC:
         polyak_averaging(self.local_critic_1, self.target_critic_1, tau=self.polyak_weight)
         polyak_averaging(self.local_critic_2, self.target_critic_2, tau=self.polyak_weight)
         
-        # Logging
-        if logger:
-            logger.add_scalar("actor/loss", actor_loss.item(), global_step=self.total_steps)
-            logger.add_scalar("actor/entropy", entropies.mean().item(), global_step=self.total_steps)
-            logger.add_scalar("critic1/loss", critic1_loss.item(), global_step=self.total_steps)
-            logger.add_scalar("critic2/loss", critic2_loss.item(), global_step=self.total_steps)
+        return actor_loss.item(), entropies.mean().item(), critic1_loss.item(), critic2_loss.item()
     
     def predict_head(self, states: np.ndarray, head_index: int, deterministic: bool=False):
         with torch.no_grad():
