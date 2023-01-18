@@ -12,12 +12,17 @@ class NHeadCritic(nn.Module):
         super().__init__()
         
         self.body = body
-        self.heads = heads
+        self.heads = nn.ModuleList(heads)
         
     def forward(self, states):
         embedded_states = self.body(states)
         q_values = [head(embedded_states) for head in self.heads]
         q_values = torch.stack(q_values, dim=0)
+        return q_values
+    
+    def predict_head(self, states: torch.FloatTensor, head_index: int) -> torch.FloatTensor:
+        embedded_states = self.body(states)
+        q_values = self.heads[head_index](embedded_states)
         return q_values
     
     @property
@@ -35,12 +40,17 @@ class NHeadActor(nn.Module):
         super().__init__()
         
         self.body = body
-        self.heads = heads
+        self.heads = nn.ModuleList(heads)
         
     def forward(self, states):
         embedded_states = self.body(states)
         logits = [head(embedded_states) for head in self.heads]
         logits = torch.stack(logits, dim=0)
+        return logits
+    
+    def predict_head(self, states: torch.FloatTensor, head_index: int) -> torch.FloatTensor:
+        embedded_states = self.body(states)
+        logits = self.heads[head_index](embedded_states)
         return logits
     
     def get_action_dist(self, states) -> torch.distributions.Categorical:

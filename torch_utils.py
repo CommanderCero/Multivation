@@ -30,13 +30,13 @@ def copy_parameters(source_model: nn.Module, target_model: nn.Module):
         assert name in source_params, "Cannot copy model parameters because '{name}' is missing in the source model."
         target_param.data.copy_(source_params[name])
         
-def polyak_interpolation(model: nn.Module, target_model: nn.Module, tau: float):
+def polyak_averaging(local_model: nn.Module, target_model: nn.Module, tau: float):
     """
     Interpolates the models weights towards the target weights using polyak averaging.
     new_weight = tau * target_param + (1 - tau) * model_param
     """
-    target_params = dict(target_model.named_parameters())
-    for name, param in model.named_parameters():
-        assert name in target_params, "Cannot interpolate model parameters because '{name}' is missing in the target model."
-        new_weight = tau * target_params[name].data + (1 - tau) * param.data
-        param.data.copy_(new_weight)
+    local_params = dict(local_model.named_parameters())
+    for name, target_param in target_model.named_parameters():
+        assert name in local_params, "Cannot interpolate target model parameters because '{name}' is missing in the local model."
+        target_param.data.mul_(tau)
+        target_param.data.add_((1-tau) * local_params[name].data)

@@ -1,13 +1,50 @@
 import argparse
+import numpy as np
 import gym
 
+
+import torch
 from torch.utils.tensorboard import SummaryWriter
+
+# DEBUG CODE for getting matplotlib.pyplot.imshow to work
+# OMP: Error #15: Initializing libiomp5md.dll, but found libiomp5md.dll already initialized.
+# I have no idea what exactly causes this error, but I think it's because of pytorch
+# In any case I just need matplotlib for debugging
+import matplotlib.pyplot as plt
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+
 
 from models import NHeadActor, NHeadCritic
 from rewards import ExtrinsicRewardGenerator, NegativeOneRewardGenerator
 from discrete_multivation_sac import DiscreteMultivationSAC
 from memory import ReplayMemory
 
+eval_count = 0
+def evaluate_multivation_agent(eval_env: gym.Env, agent: DiscreteMultivationSAC, logger: SummaryWriter, n_episodes=10):
+    for head_index in range(agent.num_heads):
+        state = eval_env.reset()
+        done = False
+        
+        rewards = []
+        predictions = []
+        screens = []
+        while not done:
+            action = agent.predict_head([state], head_index)[0]
+            prediction = agent.local_critic_1.predict_head(torch.FloatTensor([state]), head_index)[0][action].item()
+            next_state, reward, done, info = eval_env.step(action)
+            state = next_state
+            
+            rewards.append(reward)
+            predictions.append(prediction)
+            screens.append(eval_env.render("rgb_array").transpose(2, 0, 1))
+        
+        # Log results
+        global eval_count
+        eval_count+=1
+        logger.add_scalar(f"eval/mean_reward_{head_index}", np.sum(rewards), global_step=eval_count)
+        logger.add_video(f"eval/video_{head_index}", torch.ByteTensor(screens).unsqueeze(0), fps=40, global_step=eval_count)
+        
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Trains a Multivation-SAC model")
     parser.add_argument("-env", default="CartPole-v1", help="The name of the gym environment that the agent should learn to play.")
@@ -20,9 +57,11 @@ if __name__ == "__main__":
     
     # Setup logging
     logger = SummaryWriter(log_dir=f"{args.log_folder}/{args.experiment_name}")
+    #logger = None
     
     # Initialize environment
     env = gym.make(args.env)
+    eval_env = gym.make(args.env)
     assert isinstance(env.action_space, gym.spaces.Discrete), "This implementation of MultivationSAC only supports environments with discrete action spaces"
     
     # Initialize Rewards
@@ -39,10 +78,18 @@ if __name__ == "__main__":
     agent = DiscreteMultivationSAC(actor, critic_template, reward_sources, memory)
     
     # Train
+    initialisation_steps = 20000
     while agent.total_steps < args.train_steps:
         agent.train(
             env,
             total_steps=args.evaluation_interval,
-            initialisation_steps=20000
+            initialisation_steps=initialisation_steps,
+            logger=logger
+        )
+        initialisation_steps = 0
+        
+        evaluate_multivation_agent(
+            eval_env=eval_env,
+            agent=agent,
             logger=logger
         )

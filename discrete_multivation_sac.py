@@ -1,10 +1,11 @@
+import numpy as np
 import gym
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
-from torch_utils import copy_parameters, sample_weighting_vector, polyak_interpolation
+from torch_utils import copy_parameters, sample_weighting_vector, polyak_averaging
 from rewards import RewardGenerator
 from memory import ReplayMemory, ExperienceBatch
 from models import NHeadActor, NHeadCritic
@@ -27,8 +28,8 @@ def compute_target_qvalues(
     next_state_q = torch.minimum(c1_next_state_qvalues, c2_next_state_qvalues)
     next_state_q = next_state_q - entropy_weight * next_action_dist.logits
     next_state_values = (next_action_dist.probs * next_state_q).sum(-1)
-        
-    return batch.rewards + (1.0 - batch.dones) * reward_decay * next_state_values
+    
+    return batch.rewards + reward_decay * (1.0 - batch.dones) * next_state_values
         
 
 class DiscreteMultivationSAC:
@@ -39,14 +40,14 @@ class DiscreteMultivationSAC:
             memory: ReplayMemory,
             reward_decay: float=0.99,
             entropy_weight: float=0.2,
-            interpolation_weight: float=0.005,
+            polyak_weight: float=0.995,
             learning_rate: float=0.003,
             device: Union[torch.device, str]="cpu"
         ):
         self.memory = memory
         self.device = torch.device(device)
         self.entropy_weight = entropy_weight
-        self.interpolation_weight = interpolation_weight
+        self.polyak_weight = polyak_weight
         self.reward_decay = reward_decay
         self.total_steps = 0
         
@@ -104,7 +105,7 @@ class DiscreteMultivationSAC:
             # Learn
             if self.total_steps % update_interval == 0:
                 for i in range(update_steps):
-                    self.learn(batch_size=batch_size)
+                    self.learn(batch_size=batch_size, logger=logger)
                     
             
     def learn(self, batch_size: int=64, logger=None):
@@ -134,8 +135,8 @@ class DiscreteMultivationSAC:
         critic2_state_qvalues = self.local_critic_2(batch.states)
         
         expanded_actions = batch.actions.view(1, -1, 1).expand(self.num_heads, -1, 1)
-        critic1_selected_qvalues = torch.gather(critic1_state_qvalues, dim=-1, index=expanded_actions).squeeze()
-        critic2_selected_qvalues = torch.gather(critic2_state_qvalues, dim=-1, index=expanded_actions).squeeze()
+        critic1_selected_qvalues = torch.gather(critic1_state_qvalues, dim=-1, index=expanded_actions).squeeze(-1)
+        critic2_selected_qvalues = torch.gather(critic2_state_qvalues, dim=-1, index=expanded_actions).squeeze(-1)
         
         critic1_loss = F.mse_loss(critic1_selected_qvalues, target_qvalues)
         critic2_loss = F.mse_loss(critic2_selected_qvalues, target_qvalues)
@@ -145,28 +146,45 @@ class DiscreteMultivationSAC:
         critic1_state_qvalues = critic1_state_qvalues.detach()
         critic2_state_qvalues = critic2_state_qvalues.detach()
         
-        state_qvalues = torch.minimum(critic1_state_qvalues, critic2_state_qvalues)
-        state_qvalues -= self.entropy_weight * action_dist.logits
-        values = (action_dist.probs * state_qvalues).sum(-1)
-        actor_loss = -values
+        state_values = torch.minimum(critic1_state_qvalues, critic2_state_qvalues)
+        state_values = (action_dist.probs * state_values).sum(-1)
+        entropies = action_dist.entropy()
+        actor_loss = (-state_values - self.entropy_weight * entropies).mean()
         
         # Update parameters
         self.actor_optimizer.zero_grad()
         self.critic_1_optimizer.zero_grad()
         self.critic_2_optimizer.zero_grad()
+        
         torch.autograd.backward([critic1_loss, critic2_loss, actor_loss])
+        nn.utils.clip_grad_norm_(self.local_critic_1.parameters(), 0.5)
+        nn.utils.clip_grad_norm_(self.local_critic_2.parameters(), 0.5)
+        nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
+        
         self.actor_optimizer.step()
         self.critic_1_optimizer.step()
         self.critic_2_optimizer.step()
         
-        polyak_interpolation(self.target_critic_1, self.local_critic_1, tau=self.interpolation_weight)
-        polyak_interpolation(self.target_critic_2, self.local_critic_2, tau=self.interpolation_weight)
+        polyak_averaging(self.local_critic_1, self.target_critic_1, tau=self.polyak_weight)
+        polyak_averaging(self.local_critic_2, self.target_critic_2, tau=self.polyak_weight)
         
         # Logging
         if logger:
-            logger.add_scalar("loss/actor", actor_loss.item(), global_step=self.total_steps)
-            logger.add_scalar("loss/critic1", critic1_loss.item(), global_step=self.total_steps)
-            logger.add_scalar("loss/critic2", critic2_loss.item(), global_step=self.total_steps)
+            logger.add_scalar("actor/loss", actor_loss.item(), global_step=self.total_steps)
+            logger.add_scalar("actor/entropy", entropies.mean().item(), global_step=self.total_steps)
+            logger.add_scalar("critic1/loss", critic1_loss.item(), global_step=self.total_steps)
+            logger.add_scalar("critic2/loss", critic2_loss.item(), global_step=self.total_steps)
+    
+    def predict_head(self, states: np.ndarray, head_index: int, deterministic: bool=False):
+        with torch.no_grad():
+            logits = self.actor.predict_head(torch.FloatTensor(states), head_index=head_index)
+        
+        if deterministic:
+            actions = logits.argmax(-1)
+        else:
+            actions = torch.distributions.Categorical(logits=logits).sample()
+        
+        return actions.numpy()
     
     def sample_actions(self, states: torch.FloatTensor, head_weightings: List[float]) -> torch.LongTensor:
         with torch.no_grad():
