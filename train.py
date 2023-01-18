@@ -91,6 +91,6 @@ if __name__ == "__main__":
             initialisation_steps=initialisation_steps,
             logger=logger
         )
-        initialisation_steps = 0
+        initialisation_steps = max(initialisation_steps - args.evaluation_interval, 0)
         
         evaluator.evaluate()
