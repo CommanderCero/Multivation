@@ -1,6 +1,19 @@
 import torch
 import torch.nn as nn
 
+def create_conv(channels, activation=nn.ReLU, kernel_size=(3,3), stride=2, padding=1):
+    layers = []
+    for i in range(len(channels) - 1):
+        layers.append(nn.Conv2d(
+            in_channels=channels[i],
+            out_channels=channels[i+1],
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding
+        ))
+        layers.append(activation())
+    return nn.Sequential(*layers)
+
 def create_feedforward(sizes, activation=nn.ReLU): 
     layers = []
     for i in range(len(sizes) - 1):
