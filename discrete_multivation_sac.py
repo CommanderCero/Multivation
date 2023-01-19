@@ -143,12 +143,14 @@ class DiscreteMultivationSAC:
                     logger.add_scalar("learn/actor_entropy", np.mean(entropies), global_step=self.total_steps)
                     logger.add_scalar("learn/critic1_loss", np.mean(critic1_losses), global_step=self.total_steps)
                     logger.add_scalar("learn/critic2_loss", np.mean(critic2_losses), global_step=self.total_steps)
-                    
-                    if len(episode_rewards) > 0:
-                        logger.add_scalar("rollout/episode_mean_reward", np.mean(episode_rewards), global_step=self.total_steps)
-                        logger.add_scalar("rollout/episode_mean_length", np.mean(episode_lengths), global_step=self.total_steps)
-                        episode_rewards.clear()
-                        episode_lengths.clear()
+              
+            # Log episode metrics
+            if len(episode_rewards) >= logging_interval:
+                print(f"{self.total_steps}: mean_length={np.mean(episode_lengths)} mean_reward={np.mean(episode_rewards)}")
+                logger.add_scalar("rollout/episode_mean_reward", np.mean(episode_rewards), global_step=self.total_steps)
+                logger.add_scalar("rollout/episode_mean_length", np.mean(episode_lengths), global_step=self.total_steps)
+                episode_rewards.clear()
+                episode_lengths.clear()
             
     def learn(self, batch_size: int=64):
         """
@@ -239,3 +241,27 @@ class DiscreteMultivationSAC:
     @property
     def num_heads(self):
         return self.actor.num_heads
+    
+    def save(self, file_path):
+        data = {
+            "actor": self.actor.state_dict(),
+            "local_critic_1": self.local_critic_1.state_dict(),
+            "local_critic_2": self.local_critic_2.state_dict(),
+            "target_critic_1": self.target_critic_1.state_dict(),
+            "target_critic_2": self.target_critic_2.state_dict(),
+            "actor_optimizer": self.actor_optimizer.state_dict(),
+            "critic_1_optimizer": self.critic_1_optimizer.state_dict(),
+            "critic_2_optimizer": self.critic_2_optimizer.state_dict(),
+        }
+        torch.save(data, file_path)
+        
+    def load(self, file_path):
+        data = torch.load(file_path)
+        self.actor.load_state_dict(data["actor"])
+        self.local_critic_1.load_state_dict(data["local_critic_1"])
+        self.local_critic_2.load_state_dict(data["local_critic_2"])
+        self.target_critic_1.load_state_dict(data["target_critic_1"])
+        self.target_critic_2.load_state_dict(data["target_critic_2"])
+        self.actor_optimizer.load_state_dict(data["actor_optimizer"])
+        self.critic_1_optimizer.load_state_dict(data["critic_1_optimizer"])
+        self.critic_2_optimizer.load_state_dict(data["critic_2_optimizer"])

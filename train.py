@@ -82,7 +82,7 @@ if __name__ == "__main__":
     agent = DiscreteMultivationSAC(actor, critic_template, reward_sources, memory)
     
     # Train
-    evaluator = MultivationAgentEvaluator(agent, eval_env, logger)
+    evaluator = MultivationAgentEvaluator(agent, eval_env, logger, log_folder)
     initialisation_steps = 20000
     while agent.total_steps < args.train_steps:
         agent.train(
