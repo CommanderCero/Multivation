@@ -1,4 +1,5 @@
 numpy
-gymnasium[atari,accept-rom-license]
+gym[atari,accept-rom-license]
 tensorboard
 opencv-python
+moviepy

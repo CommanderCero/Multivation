@@ -44,7 +44,7 @@ class MultivationAgentEvaluator:
                 
                 reward_sum += reward
                 episode_length += 1
-                screens.append(self.eval_env.render("rgb_array").transpose(2, 0, 1))
+                screens.append(self.eval_env.render().transpose(2, 0, 1))
             
             episode_rewards.append(reward_sum)
             episode_lengths.append(episode_length)
