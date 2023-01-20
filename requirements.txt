@@ -1,0 +1,4 @@
+numpy
+gymnasium[atari,accept-rom-license]
+tensorboard
+opencv-python

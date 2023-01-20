@@ -6,14 +6,6 @@ import shutil
 
 from torch.utils.tensorboard import SummaryWriter
 
-# DEBUG CODE for getting matplotlib.pyplot.imshow to work
-# OMP: Error #15: Initializing libiomp5md.dll, but found libiomp5md.dll already initialized.
-# I have no idea what exactly causes this error, but I think it's because of pytorch
-# In any case I just need matplotlib for debugging
-import matplotlib.pyplot as plt
-import os
-os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
-
 from models import NHeadActor, NHeadCritic
 from rewards import ExtrinsicRewardGenerator, NegativeOneRewardGenerator
 from discrete_multivation_sac import DiscreteMultivationSAC

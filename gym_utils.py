@@ -8,10 +8,10 @@ def make_preprocessed_env(env_id):
     env = gym.make(env_id)
     if is_atari(env_id):
         return AtariWrapper(env)
-    return env
+    return gym.wrappers.StepAPICompatibility(env, output_truncation_bool=False)
 
 def is_atari(env_id):
-    spec = gym.envs.registry.spec(env_id)
+    spec = gym.envs.registry.get(env_id)
     return spec.entry_point == "gym.envs.atari:AtariEnv"
     
 """

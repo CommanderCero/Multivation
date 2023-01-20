@@ -45,18 +45,3 @@ class ReplayMemory:
         
     def __len__(self):
         return self.size
-
-
-import gym
-env = gym.make("CartPole-v1")
-memory = ReplayMemory(1000000, env.observation_space, env.action_space)
-
-state = env.reset()
-for _ in range(10000):
-    action = env.action_space.sample()
-    new_state, reward, done, info = env.step(action)
-    memory.add(state, action, new_state, reward, done)
-    state = new_state
-    
-    if done:
-        state = env.reset()
