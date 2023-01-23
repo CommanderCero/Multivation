@@ -100,7 +100,7 @@ class DiscreteMultivationSAC:
                 action = self.sample_actions(torch.Tensor([state]), head_weightings).item()
             
             # Take a step in the environment
-            next_state, reward, done, info = env.step(action)
+            next_state, reward, done, truncated, info = env.step(action)
             self.memory.add(state, action, next_state, reward, done)
             state = next_state
             
@@ -111,7 +111,7 @@ class DiscreteMultivationSAC:
             reward_sum += reward
             
             # End of episode, reset episode specific variables
-            if done:
+            if done or truncated:
                 state = env.reset()
                 head_weightings = sample_weighting_vector(self.num_heads)
                 
@@ -156,8 +156,8 @@ class DiscreteMultivationSAC:
         """
         Performs one update step. For this, we first sample from the ReplayMemory and then use the data to perform the following steps:
         1. Perform one gradient step on the local critics to better approximate the Q-function.
-        2. Perform one gradient step on the policy to act better in the environment.
-        3. Interpolate the target critics parameters towards the local critics using polyak averaging.
+        2. Interpolate the target critics parameters towards the local critics using polyak averaging.
+        3. Perform one gradient step on the policy to act better in the environment.
         
         Returns a tuple containing (actor_loss, entropy, critic1_loss, critic2_loss)
         """
@@ -187,32 +187,34 @@ class DiscreteMultivationSAC:
         critic1_loss = F.mse_loss(critic1_selected_qvalues, target_qvalues)
         critic2_loss = F.mse_loss(critic2_selected_qvalues, target_qvalues)
         
+        # Update critics
+        self.critic_1_optimizer.zero_grad()
+        self.critic_2_optimizer.zero_grad()
+        torch.autograd.backward([critic1_loss, critic2_loss])
+        nn.utils.clip_grad_norm_(self.local_critic_1.parameters(), 0.5)
+        nn.utils.clip_grad_norm_(self.local_critic_2.parameters(), 0.5)
+        self.critic_1_optimizer.step()
+        self.critic_2_optimizer.step()
+        
+        polyak_averaging(self.local_critic_1, self.target_critic_1, tau=self.polyak_weight)
+        polyak_averaging(self.local_critic_2, self.target_critic_2, tau=self.polyak_weight)
+        
         # Compute actor loss
         action_dist = self.actor.get_action_dist(batch.states)
-        critic1_state_qvalues = critic1_state_qvalues.detach()
-        critic2_state_qvalues = critic2_state_qvalues.detach()
+        with torch.no_grad():
+            critic1_state_qvalues = self.local_critic_1(batch.states)
+            critic2_state_qvalues = self.local_critic_2(batch.states)
         
         state_values = torch.minimum(critic1_state_qvalues, critic2_state_qvalues)
         state_values = (action_dist.probs * state_values).sum(-1)
         entropies = action_dist.entropy()
         actor_loss = (-state_values - self.entropy_weight * entropies).mean()
         
-        # Update parameters
+        # Update actor
         self.actor_optimizer.zero_grad()
-        self.critic_1_optimizer.zero_grad()
-        self.critic_2_optimizer.zero_grad()
-        
-        torch.autograd.backward([critic1_loss, critic2_loss, actor_loss])
-        nn.utils.clip_grad_norm_(self.local_critic_1.parameters(), 0.5)
-        nn.utils.clip_grad_norm_(self.local_critic_2.parameters(), 0.5)
+        actor_loss.backward()
         nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
-        
         self.actor_optimizer.step()
-        self.critic_1_optimizer.step()
-        self.critic_2_optimizer.step()
-        
-        polyak_averaging(self.local_critic_1, self.target_critic_1, tau=self.polyak_weight)
-        polyak_averaging(self.local_critic_2, self.target_critic_2, tau=self.polyak_weight)
         
         return actor_loss.item(), entropies.mean().item(), critic1_loss.item(), critic2_loss.item()
     

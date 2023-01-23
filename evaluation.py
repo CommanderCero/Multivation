@@ -36,10 +36,11 @@ class MultivationAgentEvaluator:
             episode_length = 0
             state = self.eval_env.reset()
             done = False
+            truncated = False
             
-            while not done:
+            while not done and not truncated:
                 action = self.agent.predict_head([state], head_index)[0]
-                next_state, reward, done, info = self.eval_env.step(action)
+                next_state, reward, done, truncated, info = self.eval_env.step(action)
                 state = next_state
                 
                 reward_sum += reward
