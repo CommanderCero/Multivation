@@ -1,5 +1,5 @@
-numpy
-gym[atari,accept-rom-license]
+numpy==1.24.1
+gym[atari,accept-rom-license]==0.26.2
 tensorboard
 opencv-python
 moviepy

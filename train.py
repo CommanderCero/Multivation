@@ -15,7 +15,7 @@ from evaluation import MultivationAgentEvaluator
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Trains a Multivation-SAC model")
-    parser.add_argument("-env", default="ALE/Pong-v5", help="The name of the gym environment that the agent should learn to play.")
+    parser.add_argument("-env", default="CartPole-v1", help="The name of the gym environment that the agent should learn to play.")
     parser.add_argument("-train_steps", default=1000000, type=int, help="The total amount of steps the agent can take in the environment.")
     parser.add_argument("-evaluation_interval", default=10000, type=int, help="The amount of steps to take after which the agent will be evaluated.")
     parser.add_argument("-memory_size", default=100000, type=int, help="The size of the replay memory that the agent uses.")
@@ -33,7 +33,7 @@ if __name__ == "__main__":
     
     # Initialize environment
     env = make_preprocessed_env(args.env)
-    eval_env = make_preprocessed_env(args.env)
+    eval_env = make_preprocessed_env(args.env, normalize_reward=False)
     assert isinstance(env.action_space, gym.spaces.Discrete), "This implementation of MultivationSAC only supports environments with discrete action spaces"
     
     # Initialize Rewards
