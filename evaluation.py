@@ -34,7 +34,7 @@ class MultivationAgentEvaluator:
         for _ in range(self.num_episodes):
             reward_sum = 0
             episode_length = 0
-            state = self.eval_env.reset()
+            state, _ = self.eval_env.reset()
             done = False
             truncated = False
             

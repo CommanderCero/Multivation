@@ -91,7 +91,7 @@ class DiscreteMultivationSAC:
         
         steps_taken = 0
         head_weightings = sample_weighting_vector(self.num_heads)
-        state = env.reset()
+        state, _ = env.reset()
         while steps_taken < total_steps:
             # Sample a action
             if steps_taken <= initialisation_steps:
@@ -112,7 +112,7 @@ class DiscreteMultivationSAC:
             
             # End of episode, reset episode specific variables
             if done or truncated:
-                state = env.reset()
+                state, _ = env.reset()
                 head_weightings = sample_weighting_vector(self.num_heads)
                 
                 episode_rewards.append(reward_sum)
