@@ -8,7 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 class MultivationAgentEvaluator:
     def __init__(self,
         agent: DiscreteMultivationSAC,
-        eval_env: gym.Env,
+        eval_env: gym.vector.VectorEnv,
         logger: SummaryWriter,
         best_model_folder: str,
         num_episodes=4
@@ -30,29 +30,30 @@ class MultivationAgentEvaluator:
     def evaluate_head(self, head_index:int):
         episode_rewards = []
         episode_lengths = []
-        screens = []
-        for _ in range(self.num_episodes):
-            reward_sum = 0
-            episode_length = 0
-            state, _ = self.eval_env.reset()
-            done = False
-            truncated = False
+        
+        current_reward_sums = np.zeros((self.eval_env.num_envs,), dtype="float32")
+        current_episode_lengths = np.zeros((self.eval_env.num_envs,), dtype=int)
+        
+        states, _ = self.eval_env.reset()
+        episode_count = 0
+        while episode_count < self.num_episodes:
+            actions = self.agent.predict_head(states, head_index)
+            next_states, rewards, dones, truncated, _ = self.eval_env.step(actions)
+            states = next_states
             
-            while not done and not truncated:
-                action = self.agent.predict_head(np.array([state]), head_index)[0]
-                next_state, reward, done, truncated, info = self.eval_env.step(action)
-                state = next_state
-                
-                reward_sum += reward
-                episode_length += 1
-                screens.append(self.eval_env.render().transpose(2, 0, 1))
+            current_reward_sums += rewards
+            current_episode_lengths += 1
             
-            episode_rewards.append(reward_sum)
-            episode_lengths.append(episode_length)
+            # Handle end of episode
+            end_mask = dones | truncated
+            episode_rewards.extend(current_reward_sums[end_mask])
+            episode_lengths.extend(current_episode_lengths[end_mask])
+            current_reward_sums[end_mask] = 0
+            current_episode_lengths[end_mask] = 0
+            episode_count += end_mask.sum()
         
         self.logger.add_scalar(f"eval/episode_mean_reward_{head_index}", np.mean(episode_rewards), global_step=self.num_evaluations)
         self.logger.add_scalar(f"eval/episode_mean_length_{head_index}", np.mean(episode_lengths), global_step=self.num_evaluations)
-        self.logger.add_video(f"eval/video_{head_index}", torch.ByteTensor(screens).unsqueeze(0), fps=40, global_step=self.num_evaluations)
         
         if np.mean(episode_rewards) > self.best_rewards[head_index]:
             print(f"Found a new best model for head {head_index}")

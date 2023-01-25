@@ -91,7 +91,7 @@ class DiscreteMultivationSAC:
         
         steps_taken = 0
         last_update_step = 0
-        head_weightings = sample_weighting_vector((env.num_envs, self.num_heads))
+        head_weightings = sample_weighting_vector((env.num_envs, self.num_heads), device=self.device)
         states, _ = env.reset()
         while steps_taken < total_steps:
             # Sample a action
@@ -118,7 +118,7 @@ class DiscreteMultivationSAC:
             episode_lengths.extend(current_episode_lengths[end_mask])
             current_reward_sums[end_mask] = 0
             current_episode_lengths[end_mask] = 0
-            head_weightings[end_mask] = sample_weighting_vector(head_weightings[end_mask].shape)
+            head_weightings[end_mask] = sample_weighting_vector(head_weightings[end_mask].shape, device=self.device)
             
             # Learn
             if steps_taken > initialisation_steps and (steps_taken - last_update_step) >= update_interval:

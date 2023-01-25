@@ -22,7 +22,7 @@ def create_feedforward(sizes, activation=nn.ReLU):
             layers.append(activation())
     return nn.Sequential(*layers)
 
-def sample_weighting_vector(shape: tuple) -> torch.FloatTensor:
+def sample_weighting_vector(shape: tuple, device=None) -> torch.FloatTensor:
     """
     Uniformly samples a vector of a given shape, such that the sum of all elements in the last axis equals 1.
     
@@ -32,7 +32,7 @@ def sample_weighting_vector(shape: tuple) -> torch.FloatTensor:
     """
     # Implementation is based on this stackoverflow post:
     # https://stats.stackexchange.com/questions/14059/generate-uniformly-distributed-weights-that-sum-to-unity
-    weights = torch.rand(shape, dtype=torch.float32)
+    weights = torch.rand(shape, dtype=torch.float32, device=device)
     weights = -torch.log(weights)
     weights = weights / weights.sum(axis=-1, keepdim=True)
     return weights

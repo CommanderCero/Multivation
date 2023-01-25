@@ -26,6 +26,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    print(f"Training on '{device}'")
     
     # Setup logging
     log_folder = f"{args.log_folder}/{args.experiment_name}"
@@ -36,8 +37,8 @@ if __name__ == "__main__":
     logger = SummaryWriter(log_dir=log_folder)
     
     # Initialize environment
-    env = gym_utils.make_preprocessed_vec_env(args.env, 4)
-    eval_env = gym_utils.make_preprocessed_env(args.env, normalize_reward=False)
+    env = gym_utils.make_preprocessed_vec_env(args.env, args.num_envs)
+    eval_env = gym_utils.make_preprocessed_vec_env(args.env, args.num_envs, normalize_reward=False)
     assert isinstance(env.single_action_space, gym.spaces.Discrete), "This implementation of MultivationSAC only supports environments with discrete action spaces"
     
     # Initialize Rewards
