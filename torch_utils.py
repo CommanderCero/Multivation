@@ -22,9 +22,9 @@ def create_feedforward(sizes, activation=nn.ReLU):
             layers.append(activation())
     return nn.Sequential(*layers)
 
-def sample_weighting_vector(size: int) -> torch.FloatTensor:
+def sample_weighting_vector(shape: tuple) -> torch.FloatTensor:
     """
-    Uniformly samples a vector such that the sum of all elements equals 1.
+    Uniformly samples a vector of a given shape, such that the sum of all elements in the last axis equals 1.
     
     Randomly sampling values and then normalizing them results in an uneven distribution,
     which tends to assign equal weightings accross all elements.
@@ -32,9 +32,9 @@ def sample_weighting_vector(size: int) -> torch.FloatTensor:
     """
     # Implementation is based on this stackoverflow post:
     # https://stats.stackexchange.com/questions/14059/generate-uniformly-distributed-weights-that-sum-to-unity
-    values = torch.rand(size, dtype=torch.float32)
-    values = -torch.log(values)
-    weights = values / values.sum()
+    weights = torch.rand(shape, dtype=torch.float32)
+    weights = -torch.log(weights)
+    weights = weights / weights.sum(axis=-1, keepdim=True)
     return weights
 
 def copy_parameters(source_model: nn.Module, target_model: nn.Module):
