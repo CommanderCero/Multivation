@@ -35,7 +35,7 @@ def compute_target_qvalues(
         
 
 class DiscreteMultivationSAC:
-    def __init__(self, 
+    def __init__(self,
             actor: NHeadActor, 
             critic_template: Callable[[], NHeadCritic], 
             reward_sources: List[RewardGenerator],
@@ -43,14 +43,14 @@ class DiscreteMultivationSAC:
             reward_decay: float=0.99,
             entropy_weight: float=0.2,
             polyak_weight: float=0.995,
-            learning_rate: float=0.003,
+            learning_rate: float=0.0003,
             device: Union[torch.device, str]="cpu"
         ):
         self.memory = memory
         self.device = torch.device(device)
-        self.entropy_weight = entropy_weight
         self.polyak_weight = polyak_weight
         self.reward_decay = reward_decay
+        self.entropy_weight = entropy_weight
         self.total_steps = 0
         self.total_updates = 0
         
@@ -76,7 +76,7 @@ class DiscreteMultivationSAC:
             env: gym.Env,
             total_steps: int,
             initialisation_steps: int=20000,
-            update_interval: int=100,
+            update_interval: int=4,
             batch_size: int=64,
             update_steps: int=4,
             logger: torch.utils.tensorboard.SummaryWriter=None,
@@ -121,7 +121,7 @@ class DiscreteMultivationSAC:
                 episode_length = 0
             
             # Learn
-            if self.total_steps % update_interval == 0:
+            if steps_taken > initialisation_steps and self.total_steps % update_interval == 0:
                 actor_losses = []
                 entropies = []
                 critic1_losses = []
