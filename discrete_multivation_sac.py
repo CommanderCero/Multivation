@@ -101,8 +101,8 @@ class DiscreteMultivationSAC:
                 actions = self.sample_actions(torch.from_numpy(states), head_weightings).numpy()
             
             # Take a step in the environment
-            next_states, rewards, dones, truncated, infos = env.step(actions)
-            self.memory.add(states, actions, next_states, rewards, dones)
+            next_states, rewards, dones, truncated, _ = env.step(actions)
+            self.memory.add(states, actions, next_states, rewards, dones | truncated)
             states = next_states
             
             # Update metrics
@@ -112,15 +112,15 @@ class DiscreteMultivationSAC:
             current_reward_sums += rewards
             
             # End of episode, reset episode specific variables
-            episode_rewards.extend(current_reward_sums[dones])
-            episode_lengths.extend(current_episode_lengths[dones])
-            current_reward_sums[dones] = 0
-            current_episode_lengths[dones] = 0
-            head_weightings[dones] = sample_weighting_vector(head_weightings[dones].shape)
+            end_mask = dones | truncated
+            episode_rewards.extend(current_reward_sums[end_mask])
+            episode_lengths.extend(current_episode_lengths[end_mask])
+            current_reward_sums[end_mask] = 0
+            current_episode_lengths[end_mask] = 0
+            head_weightings[end_mask] = sample_weighting_vector(head_weightings[end_mask].shape)
             
             # Learn
             if steps_taken > initialisation_steps and (steps_taken - last_update_step) >= update_interval:
-                last_update_step = steps_taken
                 actor_losses = []
                 entropies = []
                 critic1_losses = []
@@ -128,12 +128,14 @@ class DiscreteMultivationSAC:
                 
                 for i in range(update_steps):
                     actor_loss, entropy, critic1_loss, critic2_loss = self.learn(batch_size=batch_size)
-                    self.total_updates += 1
                     
                     actor_losses.append(actor_loss)
                     entropies.append(entropy)
                     critic1_losses.append(critic1_loss)
                     critic2_losses.append(critic2_loss)
+                    
+                self.total_updates += update_steps
+                last_update_step = steps_taken
                     
                 # Log training results
                 if logger is not None:
