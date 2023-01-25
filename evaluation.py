@@ -39,7 +39,7 @@ class MultivationAgentEvaluator:
             truncated = False
             
             while not done and not truncated:
-                action = self.agent.predict_head([state], head_index)[0]
+                action = self.agent.predict_head(np.array([state]), head_index)[0]
                 next_state, reward, done, truncated, info = self.eval_env.step(action)
                 state = next_state
                 

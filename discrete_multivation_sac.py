@@ -98,7 +98,8 @@ class DiscreteMultivationSAC:
             if steps_taken <= initialisation_steps:
                 actions = env.action_space.sample()
             else:
-                actions = self.sample_actions(torch.from_numpy(states), head_weightings).numpy()
+                actions = self.sample_actions(torch.from_numpy(states).to(self.device), head_weightings)
+                actions = actions.cpu().numpy()
             
             # Take a step in the environment
             next_states, rewards, dones, truncated, _ = env.step(actions)
@@ -221,14 +222,15 @@ class DiscreteMultivationSAC:
     
     def predict_head(self, states: np.ndarray, head_index: int, deterministic: bool=False):
         with torch.no_grad():
-            logits = self.actor.predict_head(torch.FloatTensor(states), head_index=head_index)
+            states = torch.from_numpy(states).to(self.device)
+            logits = self.actor.predict_head(states, head_index=head_index)
         
         if deterministic:
             actions = logits.argmax(-1)
         else:
             actions = torch.distributions.Categorical(logits=logits).sample()
         
-        return actions.numpy()
+        return actions.cpu().numpy()
     
     def sample_actions(self, states: torch.FloatTensor, head_weightings: torch.FloatTensor) -> torch.LongTensor:
         """

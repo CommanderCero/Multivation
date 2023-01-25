@@ -4,6 +4,7 @@ import gym
 import os
 import shutil
 
+import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from models import NHeadActor, NHeadCritic
@@ -23,6 +24,8 @@ if __name__ == "__main__":
     parser.add_argument("-log_folder", default="runs", help="Name of the folder where the tensorboard logs are stored.")
     parser.add_argument("-experiment_name", default="experiment", help="Experiment name used for identifying logs in tensorboard.")
     args = parser.parse_args()
+    
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
     
     # Setup logging
     log_folder = f"{args.log_folder}/{args.experiment_name}"
@@ -72,7 +75,7 @@ if __name__ == "__main__":
         )
     
     memory = ReplayMemory(args.memory_size // args.num_envs, args.num_envs, env.single_observation_space, env.single_action_space)
-    agent = DiscreteMultivationSAC(actor, critic_template, reward_sources, memory)
+    agent = DiscreteMultivationSAC(actor, critic_template, reward_sources, memory, device=device)
     
     # Train
     evaluator = MultivationAgentEvaluator(agent, eval_env, logger, log_folder)
