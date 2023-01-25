@@ -2,6 +2,15 @@ import numpy as np
 
 import gym
 import gym.wrappers as wrappers
+import gym.vector as vgym               
+
+def make_preprocessed_vec_env(env_id, num_envs, normalize_reward=True):
+    fn = lambda: make_preprocessed_env(env_id, normalize_reward=False)
+    env = vgym.SyncVectorEnv([fn for _ in range(num_envs)], copy=False)
+    if normalize_reward:
+        # Normalization has to be the same across all environments
+        env = gym.wrappers.NormalizeReward(env)
+    return env
 
 def make_preprocessed_env(env_id, normalize_reward=True):
     env = gym.make(env_id, render_mode="rgb_array")

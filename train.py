@@ -10,12 +10,13 @@ from models import NHeadActor, NHeadCritic
 from rewards import ExtrinsicRewardGenerator, NegativeOneRewardGenerator
 from discrete_multivation_sac import DiscreteMultivationSAC
 from memory import ReplayMemory
-from gym_utils import make_preprocessed_env
+import gym_utils
 from evaluation import MultivationAgentEvaluator
         
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Trains a Multivation-SAC model")
     parser.add_argument("-env", default="CartPole-v1", help="The name of the gym environment that the agent should learn to play.")
+    parser.add_argument("-num_envs", default=4, type=int, help="How many environments to run in parallel.")
     parser.add_argument("-train_steps", default=1000000, type=int, help="The total amount of steps the agent can take in the environment.")
     parser.add_argument("-evaluation_interval", default=10000, type=int, help="The amount of steps to take after which the agent will be evaluated.")
     parser.add_argument("-memory_size", default=100000, type=int, help="The size of the replay memory that the agent uses.")
@@ -32,9 +33,9 @@ if __name__ == "__main__":
     logger = SummaryWriter(log_dir=log_folder)
     
     # Initialize environment
-    env = make_preprocessed_env(args.env)
-    eval_env = make_preprocessed_env(args.env, normalize_reward=False)
-    assert isinstance(env.action_space, gym.spaces.Discrete), "This implementation of MultivationSAC only supports environments with discrete action spaces"
+    env = gym_utils.make_preprocessed_vec_env(args.env, 4)
+    eval_env = gym_utils.make_preprocessed_env(args.env, normalize_reward=False)
+    assert isinstance(env.single_action_space, gym.spaces.Discrete), "This implementation of MultivationSAC only supports environments with discrete action spaces"
     
     # Initialize Rewards
     reward_sources = [
@@ -43,11 +44,11 @@ if __name__ == "__main__":
     ]
     
     # Initialize Agent
-    num_actions = env.action_space.n
+    num_actions = env.single_action_space.n
     num_heads = len(reward_sources)
-    input_shape = env.observation_space.shape
+    input_shape = env.single_observation_space.shape
     head_layers = [64, num_actions]
-    if len(env.observation_space.shape) == 1:
+    if len(env.single_observation_space.shape) == 1:
         actor = NHeadActor.create_pure_feedforward([*input_shape, 64, 64], num_heads, head_layers)
         critic_template = lambda: NHeadCritic.create_pure_feedforward([*input_shape, 64, 64], num_heads, head_layers)
     else:
@@ -70,7 +71,7 @@ if __name__ == "__main__":
             head_layers=head_layers
         )
     
-    memory = ReplayMemory(args.memory_size, env.observation_space, env.action_space)
+    memory = ReplayMemory(args.memory_size // args.num_envs, args.num_envs, env.single_observation_space, env.single_action_space)
     agent = DiscreteMultivationSAC(actor, critic_template, reward_sources, memory)
     
     # Train

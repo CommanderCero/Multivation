@@ -73,7 +73,7 @@ class DiscreteMultivationSAC:
         copy_parameters(self.local_critic_2, self.target_critic_2)
         
     def train(self,
-            env: gym.Env,
+            env: gym.vector.VectorEnv,
             total_steps: int,
             initialisation_steps: int=20000,
             update_interval: int=4,
@@ -82,46 +82,45 @@ class DiscreteMultivationSAC:
             logger: torch.utils.tensorboard.SummaryWriter=None,
             logging_interval: int=4
         ):
-        assert isinstance(env.action_space, gym.spaces.Discrete), "DiscreteMultivationSAC only supports environments with a discrete action space."
+        assert isinstance(env.single_action_space, gym.spaces.Discrete), "DiscreteMultivationSAC only supports environments with a discrete action space."
         
         episode_rewards = []
         episode_lengths = []
-        reward_sum = 0
-        episode_length = 0
+        current_reward_sums = np.zeros((env.num_envs,), dtype="float32")
+        current_episode_lengths = np.zeros((env.num_envs,), dtype=int)
         
         steps_taken = 0
-        head_weightings = sample_weighting_vector(self.num_heads)
-        state, _ = env.reset()
+        last_update_step = 0
+        head_weightings = sample_weighting_vector((env.num_envs, self.num_heads))
+        states, _ = env.reset()
         while steps_taken < total_steps:
             # Sample a action
             if steps_taken <= initialisation_steps:
-                action = env.action_space.sample()
+                actions = env.action_space.sample()
             else:
-                action = self.sample_actions(torch.Tensor([state]), head_weightings).item()
+                actions = self.sample_actions(torch.from_numpy(states), head_weightings).numpy()
             
             # Take a step in the environment
-            next_state, reward, done, truncated, info = env.step(action)
-            self.memory.add(state, action, next_state, reward, done)
-            state = next_state
+            next_states, rewards, dones, truncated, infos = env.step(actions)
+            self.memory.add(states, actions, next_states, rewards, dones)
+            states = next_states
             
             # Update metrics
-            steps_taken += 1
-            self.total_steps += 1
-            episode_length += 1
-            reward_sum += reward
+            self.total_steps += env.num_envs
+            steps_taken += env.num_envs
+            current_episode_lengths += 1
+            current_reward_sums += rewards
             
             # End of episode, reset episode specific variables
-            if done or truncated:
-                state, _ = env.reset()
-                head_weightings = sample_weighting_vector(self.num_heads)
-                
-                episode_rewards.append(reward_sum)
-                episode_lengths.append(episode_length)
-                reward_sum = 0
-                episode_length = 0
+            episode_rewards.extend(current_reward_sums[dones])
+            episode_lengths.extend(current_episode_lengths[dones])
+            current_reward_sums[dones] = 0
+            current_episode_lengths[dones] = 0
+            head_weightings[dones] = sample_weighting_vector(head_weightings[dones].shape)
             
             # Learn
-            if steps_taken > initialisation_steps and self.total_steps % update_interval == 0:
+            if steps_taken > initialisation_steps and (steps_taken - last_update_step) >= update_interval:
+                last_update_step = steps_taken
                 actor_losses = []
                 entropies = []
                 critic1_losses = []
@@ -137,7 +136,7 @@ class DiscreteMultivationSAC:
                     critic2_losses.append(critic2_loss)
                     
                 # Log training results
-                if logger:
+                if logger is not None:
                     logger.add_scalar("learn/num_updates", self.total_updates, global_step=self.total_steps)
                     logger.add_scalar("learn/actor_loss", np.mean(actor_losses), global_step=self.total_steps)
                     logger.add_scalar("learn/actor_entropy", np.mean(entropies), global_step=self.total_steps)
@@ -145,7 +144,7 @@ class DiscreteMultivationSAC:
                     logger.add_scalar("learn/critic2_loss", np.mean(critic2_losses), global_step=self.total_steps)
               
             # Log episode metrics
-            if len(episode_rewards) >= logging_interval:
+            if len(episode_rewards) >= logging_interval and logger is not None:
                 print(f"{self.total_steps}: mean_length={np.mean(episode_lengths)} mean_reward={np.mean(episode_rewards)}")
                 logger.add_scalar("rollout/episode_mean_reward", np.mean(episode_rewards), global_step=self.total_steps)
                 logger.add_scalar("rollout/episode_mean_length", np.mean(episode_lengths), global_step=self.total_steps)
@@ -229,13 +228,18 @@ class DiscreteMultivationSAC:
         
         return actions.numpy()
     
-    def sample_actions(self, states: torch.FloatTensor, head_weightings: List[float]) -> torch.LongTensor:
+    def sample_actions(self, states: torch.FloatTensor, head_weightings: torch.FloatTensor) -> torch.LongTensor:
+        """
+        states: (num_envs, state_shape)
+        head_weightings: (num_envs, num_heads) s.t sum(head_weightings, axis=1) == [1., 1., ...]
+        """
         with torch.no_grad():
+            "logits: (num_heads, num_envs, num_actions)"
             logits = self.actor(states)
             
         # Combine probabilities using the weighting
-        for i, weighting in enumerate(head_weightings):
-            logits[i] *= weighting
+        for head_index in range(self.num_heads):
+            logits[head_index] *= head_weightings[:, head_index].view(-1, 1)
         combined_logits = logits.sum(axis=0)
         
         return torch.distributions.Categorical(logits=combined_logits).sample()
