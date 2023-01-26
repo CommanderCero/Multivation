@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from torch_utils import create_feedforward, create_conv
 
-from typing import List
+from typing import List, Tuple
 from abc import ABC, abstractmethod
 
 def get_output_count(net: nn.Module, input_shape: tuple) -> int:
@@ -75,14 +75,22 @@ class NHeadActor(nn.Module):
         logits = torch.stack(logits, dim=0)
         return logits
     
-    def predict_head(self, states: torch.FloatTensor, head_index: int) -> torch.FloatTensor:
+    def forward_head(self, states: torch.FloatTensor, head_index: int) -> torch.FloatTensor:
         embedded_states = self.body(states)
         logits = self.heads[head_index](embedded_states)
         return logits
     
-    def get_action_dist(self, states) -> torch.distributions.Categorical:
+    def sample_actions(self, states: torch.FloatTensor) -> torch.LongTensor:
         logits = self.forward(states)
-        return torch.distributions.Categorical(logits=logits)
+        action_dist = torch.distributions.Categorical(logits=logits)
+        actions = action_dist.sample()
+        return actions
+    
+    def get_action_probabilities(self, states: torch.FloatTensor) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
+        logits = self.forward(states)
+        action_probs = F.softmax(logits, dim=-1)
+        log_action_probs = F.log_softmax(logits, dim=-1)
+        return action_probs, log_action_probs
     
     @property
     def num_heads(self):

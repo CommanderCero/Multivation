@@ -1,23 +1,28 @@
 import torch
 import torch.nn as nn
 
+def he_initialization(layer, bias_const=0.0):
+    nn.init.kaiming_normal_(layer.weight)
+    nn.init.constant_(layer.bias, bias_const)
+    return layer
+
 def create_conv(channels, activation=nn.ReLU, kernel_size=(3,3), stride=2, padding=1):
     layers = []
     for i in range(len(channels) - 1):
-        layers.append(nn.Conv2d(
+        layers.append(he_initialization(nn.Conv2d(
             in_channels=channels[i],
             out_channels=channels[i+1],
             kernel_size=kernel_size,
             stride=stride,
             padding=padding
-        ))
+        )))
         layers.append(activation())
     return nn.Sequential(*layers)
 
 def create_feedforward(sizes, activation=nn.ReLU): 
     layers = []
     for i in range(len(sizes) - 1):
-        layers.append(nn.Linear(sizes[i], sizes[i+1]))
+        layers.append(he_initialization(nn.Linear(sizes[i], sizes[i+1])))
         if i < len(sizes) - 2:
             layers.append(activation())
     return nn.Sequential(*layers)

@@ -25,11 +25,11 @@ def compute_target_qvalues(
     with torch.no_grad():
         c1_next_state_qvalues = critic1(batch.next_states)
         c2_next_state_qvalues = critic2(batch.next_states)
-        next_action_dist = actor.get_action_dist(batch.next_states)
+        next_state_pi, next_state_log_pi = actor.get_action_probabilities(batch.next_states)
         
     next_state_q = torch.minimum(c1_next_state_qvalues, c2_next_state_qvalues)
-    next_state_q = next_state_q - entropy_weight * next_action_dist.logits
-    next_state_values = (next_action_dist.probs * next_state_q).sum(-1)
+    next_state_q = next_state_q - entropy_weight * next_state_log_pi
+    next_state_values = (next_state_pi * next_state_q).sum(-1)
     
     return batch.rewards + reward_decay * (1.0 - batch.dones) * next_state_values
         
@@ -64,9 +64,9 @@ class DiscreteMultivationSAC:
         assert len(self.reward_sources) == self.actor.num_heads, "The number of actor-heads do not match the number of reward generators."
         assert len(self.reward_sources) == self.local_critic_1.num_heads, "The number of critic-heads do not match the number of reward generators."
         
-        self.actor_optimizer = optim.Adam(params=self.actor.parameters(), lr=learning_rate)
-        self.critic_1_optimizer = optim.Adam(params=self.local_critic_1.parameters(), lr=learning_rate)
-        self.critic_2_optimizer = optim.Adam(params=self.local_critic_2.parameters(), lr=learning_rate)
+        self.actor_optimizer = optim.Adam(params=self.actor.parameters(), lr=learning_rate, eps=1e-4)
+        self.critic_1_optimizer = optim.Adam(params=self.local_critic_1.parameters(), lr=learning_rate, eps=1e-4)
+        self.critic_2_optimizer = optim.Adam(params=self.local_critic_2.parameters(), lr=learning_rate, eps=1e-4)
         
         # Ensure local and target critics are the same
         copy_parameters(self.local_critic_1, self.target_critic_1)
@@ -193,8 +193,8 @@ class DiscreteMultivationSAC:
         self.critic_1_optimizer.zero_grad()
         self.critic_2_optimizer.zero_grad()
         torch.autograd.backward([critic1_loss, critic2_loss])
-        nn.utils.clip_grad_norm_(self.local_critic_1.parameters(), 0.5)
-        nn.utils.clip_grad_norm_(self.local_critic_2.parameters(), 0.5)
+        #nn.utils.clip_grad_norm_(self.local_critic_1.parameters(), 0.5)
+        #nn.utils.clip_grad_norm_(self.local_critic_2.parameters(), 0.5)
         self.critic_1_optimizer.step()
         self.critic_2_optimizer.step()
         
@@ -202,20 +202,19 @@ class DiscreteMultivationSAC:
         polyak_averaging(self.local_critic_2, self.target_critic_2, tau=self.polyak_weight)
         
         # Compute actor loss
-        action_dist = self.actor.get_action_dist(batch.states)
+        state_pi, state_log_pi = self.actor.get_action_probabilities(batch.states)
         with torch.no_grad():
             critic1_state_qvalues = self.local_critic_1(batch.states)
             critic2_state_qvalues = self.local_critic_2(batch.states)
         
         state_values = torch.minimum(critic1_state_qvalues, critic2_state_qvalues)
-        state_values = (action_dist.probs * state_values).sum(-1)
-        entropies = action_dist.entropy()
-        actor_loss = (-state_values - self.entropy_weight * entropies).mean()
+        actor_loss = torch.mean(state_pi * (self.entropy_weight * state_log_pi - state_values))
+        entropies = torch.sum(-state_log_pi * state_pi, dim=-1)
         
         # Update actor
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
-        nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
+        #nn.utils.clip_grad_norm_(self.actor.parameters(), 0.5)
         self.actor_optimizer.step()
         
         return actor_loss.item(), entropies.mean().item(), critic1_loss.item(), critic2_loss.item()
@@ -223,7 +222,7 @@ class DiscreteMultivationSAC:
     def predict_head(self, states: np.ndarray, head_index: int, deterministic: bool=False):
         with torch.no_grad():
             states = torch.from_numpy(states).to(self.device)
-            logits = self.actor.predict_head(states, head_index=head_index)
+            logits = self.actor.forward_head(states, head_index=head_index)
         
         if deterministic:
             actions = logits.argmax(-1)
