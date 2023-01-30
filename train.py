@@ -37,7 +37,7 @@ if __name__ == "__main__":
     logger = SummaryWriter(log_dir=log_folder)
     
     # Initialize environment
-    env = gym_utils.make_preprocessed_vec_env(args.env, args.num_envs)
+    env = gym_utils.make_preprocessed_vec_env(args.env, args.num_envs, normalize_reward=False)
     eval_env = gym_utils.make_preprocessed_vec_env(args.env, args.num_envs, normalize_reward=False)
     assert isinstance(env.single_action_space, gym.spaces.Discrete), "This implementation of MultivationSAC only supports environments with discrete action spaces"
     
@@ -76,7 +76,7 @@ if __name__ == "__main__":
         )
     
     memory = ReplayMemory(args.memory_size // args.num_envs, args.num_envs, env.single_observation_space, env.single_action_space)
-    agent = DiscreteMultivationSAC(actor, critic_template, reward_sources, memory, device=device)
+    agent = DiscreteMultivationSAC(actor, critic_template, reward_sources, memory, num_actions, device=device, autotune_entropy=True)
     
     # Train
     evaluator = MultivationAgentEvaluator(agent, eval_env, logger, log_folder)

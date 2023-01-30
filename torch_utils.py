@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 
 def he_initialization(layer, bias_const=0.0):
-    nn.init.kaiming_normal_(layer.weight)
-    nn.init.constant_(layer.bias, bias_const)
+    #nn.init.kaiming_normal_(layer.weight)
+    #nn.init.constant_(layer.bias, bias_const)
     return layer
 
 def create_conv(channels, activation=nn.ReLU, kernel_size=(3,3), stride=2, padding=1):

@@ -12,8 +12,8 @@ def make_preprocessed_vec_env(env_id, num_envs, normalize_reward=True):
         env = gym.wrappers.NormalizeReward(env)
     return env
 
-def make_preprocessed_env(env_id, normalize_reward=True):
-    env = gym.make(env_id, render_mode="rgb_array")
+def make_preprocessed_env(env_id, normalize_reward=True, render_mode="rgb_array"):
+    env = gym.make(env_id, render_mode=render_mode)
     if is_atari(env_id):
         env = wrappers.AtariPreprocessing(env, frame_skip=1, screen_size=64, scale_obs=True) # frame_skip already handled by the AtariEnv itself
         env = wrappers.FrameStack(env, 2)
