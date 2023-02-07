@@ -45,7 +45,7 @@ def parse_args():
         help="weather to capture videos of the agent performances (check out `videos` folder)")
 
     # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="BeamRiderNoFrameskip-v4",
+    parser.add_argument("--env-id", type=str, default="PongNoFrameskip-v4",
         help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=5000000,
         help="total timesteps of the experiments")
@@ -57,7 +57,7 @@ def parse_args():
         help="target smoothing coefficient (default: 1)") # Default is 1 to perform replacement update
     parser.add_argument("--batch-size", type=int, default=64,
         help="the batch size of sample from the reply memory")
-    parser.add_argument("--learning-starts", type=int, default=100,#default=2e4,
+    parser.add_argument("--learning-starts", type=int, default=2e4,
         help="timestep to start learning")
     parser.add_argument("--policy-lr", type=float, default=3e-4,
         help="the learning rate of the policy network optimizer")
@@ -130,67 +130,6 @@ def layer_init(layer, bias_const=0.0):
 # NOTE: Sharing a CNN encoder between Actor and Critics is not recommended for SAC without stopping actor gradients
 # See the SAC+AE paper https://arxiv.org/abs/1910.01741 for more info
 # TL;DR The actor's gradients mess up the representation when using a joint encoder
-class SoftQNetwork(nn.Module):
-    def __init__(self, envs):
-        super().__init__()
-        obs_shape = envs.single_observation_space.shape
-        self.conv = nn.Sequential(
-            layer_init(nn.Conv2d(obs_shape[0], 32, kernel_size=8, stride=4)),
-            nn.ReLU(),
-            layer_init(nn.Conv2d(32, 64, kernel_size=4, stride=2)),
-            nn.ReLU(),
-            layer_init(nn.Conv2d(64, 64, kernel_size=3, stride=1)),
-            nn.Flatten(),
-        )
-
-        with torch.inference_mode():
-            output_dim = self.conv(torch.zeros(1, *obs_shape)).shape[1]
-
-        self.fc1 = layer_init(nn.Linear(output_dim, 512))
-        self.fc_q = layer_init(nn.Linear(512, envs.single_action_space.n))
-
-    def forward(self, x):
-        x = F.relu(self.conv(x / 255.0))
-        x = F.relu(self.fc1(x))
-        q_vals = self.fc_q(x)
-        return q_vals
-
-
-class Actor(nn.Module):
-    def __init__(self, envs):
-        super().__init__()
-        obs_shape = envs.single_observation_space.shape
-        self.conv = nn.Sequential(
-            layer_init(nn.Conv2d(obs_shape[0], 32, kernel_size=8, stride=4)),
-            nn.ReLU(),
-            layer_init(nn.Conv2d(32, 64, kernel_size=4, stride=2)),
-            nn.ReLU(),
-            layer_init(nn.Conv2d(64, 64, kernel_size=3, stride=1)),
-            nn.Flatten(),
-        )
-
-        with torch.inference_mode():
-            output_dim = self.conv(torch.zeros(1, *obs_shape)).shape[1]
-
-        self.fc1 = layer_init(nn.Linear(output_dim, 512))
-        self.fc_logits = layer_init(nn.Linear(512, envs.single_action_space.n))
-
-    def forward(self, x):
-        x = F.relu(self.conv(x))
-        x = F.relu(self.fc1(x))
-        logits = self.fc_logits(x)
-
-        return logits
-
-    def get_action(self, x):
-        logits = self(x / 255.0)
-        policy_dist = Categorical(logits=logits)
-        action = policy_dist.sample()
-        # Action probabilities for calculating the adapted soft-Q loss
-        action_probs = policy_dist.probs
-        log_prob = F.log_softmax(logits, dim=1)
-        return action, log_prob, action_probs
-    
 class NHeadSoftQNetwork(nn.Module):
     def __init__(self, num_heads, observation_shape, num_actions):
         super().__init__()
@@ -290,6 +229,7 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    print(f"Using {device}")
 
     # env setup
     envs = gym.vector.SyncVectorEnv([make_env(args.env_id, args.seed, 0, args.capture_video, run_name)])
@@ -298,9 +238,10 @@ if __name__ == "__main__":
     # rewards setup
     reward_sources = [
         ExtrinsicRewardGenerator(),
-        NegativeOneRewardGenerator()
+        #NegativeOneRewardGenerator()
     ]
     num_heads = len(reward_sources)
+    print(f"Using {num_heads} heads")
 
     # agent setup
     new_actor = NHeadActor(num_heads, envs.single_observation_space.shape, envs.single_action_space.n).to(device)
@@ -308,6 +249,8 @@ if __name__ == "__main__":
     new_qf2 = NHeadSoftQNetwork(num_heads, envs.single_observation_space.shape, envs.single_action_space.n).to(device)
     new_qf1_target = NHeadSoftQNetwork(num_heads, envs.single_observation_space.shape, envs.single_action_space.n).to(device)
     new_qf2_target = NHeadSoftQNetwork(num_heads, envs.single_observation_space.shape, envs.single_action_space.n).to(device)
+    new_qf1_target.load_state_dict(new_qf1.state_dict())
+    new_qf2_target.load_state_dict(new_qf2.state_dict())
     # TRY NOT TO MODIFY: eps=1e-4 increases numerical stability
     q_optimizer = optim.Adam(list(new_qf1.parameters()) + list(new_qf2.parameters()), lr=args.q_lr, eps=1e-4)
     actor_optimizer = optim.Adam(list(new_actor.parameters()), lr=args.policy_lr, eps=1e-4)
@@ -335,7 +278,8 @@ if __name__ == "__main__":
     for global_step in range(args.total_timesteps):
         # ALGO LOGIC: put action logic here
         if global_step < args.learning_starts:
-            actions = envs.action_space.sample()
+            # envs.action_space.sample() is not deterministic for some reason
+            actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
             actions, _, _ = new_actor.get_action(torch.Tensor(obs).to(device))
             actions = actions[0] # Head 0
@@ -368,7 +312,7 @@ if __name__ == "__main__":
                 data = rb.sample(args.batch_size)
                 
                 # Generate rewards
-                rewards = [source.generate_rewards(data) for source in reward_sources]
+                rewards = [source.generate_rewards(data).to(device) for source in reward_sources]
                 rewards = torch.stack([r.flatten() for r in rewards], dim=0)
                 
                 # CRITIC training
@@ -405,8 +349,8 @@ if __name__ == "__main__":
                     qf2_values = new_qf2(data.observations)
                     min_qf_values = torch.min(qf1_values, qf2_values)
                 # no need for reparameterization, the expectation can be calculated for discrete actions
-                expected_values = (action_probs * (new_alpha.reshape(-1,1,1) * log_pi - min_qf_values)).sum(-1)
-                actor_losses = torch.mean(expected_values, dim=-1)
+                actor_losses = (action_probs * (new_alpha.reshape(-1,1,1) * log_pi - min_qf_values))
+                actor_losses = torch.mean(actor_losses.view(num_heads, -1), dim=-1)
                 actor_loss = actor_losses.sum()
 
                 actor_optimizer.zero_grad()
@@ -415,7 +359,7 @@ if __name__ == "__main__":
 
                 if args.autotune:
                     # re-use action probabilities for temperature loss
-                    alpha_losses = (action_probs.detach() * (-new_log_alpha.reshape(-1,1,1) * log_pi.detach() + target_entropy)).view(num_heads, -1).mean(-1)
+                    alpha_losses = (action_probs.detach() * (-new_log_alpha.reshape(-1,1,1) * (log_pi.detach() + target_entropy))).view(num_heads, -1).mean(-1)
                     alpha_loss = alpha_losses.sum()
                     
                     a_optimizer.zero_grad()
@@ -427,19 +371,19 @@ if __name__ == "__main__":
             if global_step % args.target_network_frequency == 0:
                 for param, target_param in zip(new_qf1.parameters(), new_qf1_target.parameters()):
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
-                for param, target_param in zip(new_qf1.parameters(), new_qf1_target.parameters()):
+                for param, target_param in zip(new_qf2.parameters(), new_qf2_target.parameters()):
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
 
             if global_step % 100 == 0:
                 for i in range(num_heads):
-                    writer.add_scalar("head_{i}/losses/qf1_values", qf1_a_values[i].mean().item(), global_step)
-                    writer.add_scalar("head_{i}/losses/qf2_values", qf2_a_values[i].mean().item(), global_step)
-                    writer.add_scalar("head_{i}/losses/qf1_loss", qf1_losses[i].item(), global_step)
-                    writer.add_scalar("head_{i}/losses/qf2_loss", qf2_losses[i].item(), global_step)
-                    writer.add_scalar("head_{i}/losses/actor_loss", actor_losses[i].item(), global_step)
-                    writer.add_scalar("head_{i}/losses/alpha", new_alpha[i], global_step)
+                    writer.add_scalar(f"head_{i}/losses/qf1_values", qf1_a_values[i].mean().item(), global_step)
+                    writer.add_scalar(f"head_{i}/losses/qf2_values", qf2_a_values[i].mean().item(), global_step)
+                    writer.add_scalar(f"head_{i}/losses/qf1_loss", qf1_losses[i].item(), global_step)
+                    writer.add_scalar(f"head_{i}/losses/qf2_loss", qf2_losses[i].item(), global_step)
+                    writer.add_scalar(f"head_{i}/losses/actor_loss", actor_losses[i].item(), global_step)
+                    writer.add_scalar(f"head_{i}/losses/alpha", new_alpha[i], global_step)
                     if args.autotune:
-                        writer.add_scalar("head_{i}/losses/alpha_loss", alpha_losses[i].item(), global_step)
+                        writer.add_scalar(f"head_{i}/losses/alpha_loss", alpha_losses[i].item(), global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
                 

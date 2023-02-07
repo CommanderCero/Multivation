@@ -1,0 +1,1 @@
+poetry run tensorboard --logdir=runs --port=6007
