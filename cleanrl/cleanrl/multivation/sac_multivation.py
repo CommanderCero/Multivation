@@ -5,7 +5,8 @@ import random
 import time
 import yaml
 from distutils.util import strtobool
-from abc import ABC, abstractmethod
+
+from rewards import ExtrinsicRewardGenerator
 
 import gym
 import numpy as np
@@ -90,41 +91,6 @@ def parse_reward_sources(yaml_node):
         reward_type = source_node["type"].lower()
         reward_sources.append(source_types[reward_type].from_config(source_node))
     return reward_sources
-                            
-
-class RewardGenerator(ABC):
-    def __init__(self, reward_decay: float=0.99, use_dones: bool=True):
-        self.reward_decay = reward_decay
-        self.use_dones = use_dones
-        
-    def generate_data(self, samples: ReplayBufferSamples):
-        dones = samples.dones if self.use_dones else torch.zeros(samples.dones.shape)
-        rewards = self.generate_rewards(samples)
-        return rewards, dones, self.reward_decay
-    
-    @abstractmethod
-    def generate_rewards(self, samples: ReplayBufferSamples) -> torch.Tensor:
-        pass
-    
-class ExtrinsicRewardGenerator(RewardGenerator):
-    def __init__(self, reward_decay: float=0.99, use_dones: bool=True):
-        super().__init__(reward_decay=reward_decay, use_dones=use_dones)
-    
-    def generate_rewards(self, samples: ReplayBufferSamples) -> torch.Tensor:
-        return samples.rewards
-    
-    def from_config(yaml_node):
-        return ExtrinsicRewardGenerator(
-            reward_decay=yaml_node["reward_decay"],
-            use_dones=yaml_node["use_dones"],
-        )
-    
-class NegativeOneRewardGenerator(RewardGenerator):
-    def __init__(self, reward_decay: float=0.99, use_dones: bool=True):
-        super().__init__(reward_decay=reward_decay, use_dones=use_dones)
-    
-    def generate_rewards(self, samples: ReplayBufferSamples) -> torch.Tensor:
-        return torch.full(samples.rewards.shape, -1)
 
 def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
