@@ -1,0 +1,7 @@
+RewardSources:
+    - type: Extrinsic
+      reward_decay: 0.99
+      use_dones: false
+    - type: Extrinsic
+      reward_decay: 0.99
+      use_dones: false

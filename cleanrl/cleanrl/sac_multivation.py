@@ -3,6 +3,7 @@ import argparse
 import os
 import random
 import time
+import yaml
 from distutils.util import strtobool
 from abc import ABC, abstractmethod
 
@@ -27,6 +28,8 @@ from torch.utils.tensorboard import SummaryWriter
 def parse_args():
     # fmt: off
     parser = argparse.ArgumentParser()
+    parser.add_argument("--config_path", type=str, default=None,
+        help="Path to a optional YAML config file.")
     parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"),
         help="the name of this experiment")
     parser.add_argument("--seed", type=int, default=1, 
@@ -77,21 +80,48 @@ def parse_args():
     # fmt: on
     return args
 
+def parse_reward_sources(yaml_node):
+    source_types = {
+        "extrinsic": ExtrinsicRewardGenerator
+    }
+    
+    reward_sources = []
+    for source_node in yaml_node:
+        reward_type = source_node["type"].lower()
+        reward_sources.append(source_types[reward_type].from_config(source_node))
+    return reward_sources
+                            
+
 class RewardGenerator(ABC):
+    def __init__(self, reward_decay: float=0.99, use_dones: bool=True):
+        self.reward_decay = reward_decay
+        self.use_dones = use_dones
+        
+    def generate_data(self, samples: ReplayBufferSamples):
+        dones = samples.dones if self.use_dones else torch.zeros(samples.dones.shape)
+        rewards = self.generate_rewards(samples)
+        return rewards, dones, self.reward_decay
+    
     @abstractmethod
     def generate_rewards(self, samples: ReplayBufferSamples) -> torch.Tensor:
         pass
     
 class ExtrinsicRewardGenerator(RewardGenerator):
-    def __init__(self):
-        pass
+    def __init__(self, reward_decay: float=0.99, use_dones: bool=True):
+        super().__init__(reward_decay=reward_decay, use_dones=use_dones)
     
     def generate_rewards(self, samples: ReplayBufferSamples) -> torch.Tensor:
         return samples.rewards
     
+    def from_config(yaml_node):
+        return ExtrinsicRewardGenerator(
+            reward_decay=yaml_node["reward_decay"],
+            use_dones=yaml_node["use_dones"],
+        )
+    
 class NegativeOneRewardGenerator(RewardGenerator):
-    def __init__(self):
-        pass
+    def __init__(self, reward_decay: float=0.99, use_dones: bool=True):
+        super().__init__(reward_decay=reward_decay, use_dones=use_dones)
     
     def generate_rewards(self, samples: ReplayBufferSamples) -> torch.Tensor:
         return torch.full(samples.rewards.shape, -1)
@@ -221,6 +251,12 @@ if __name__ == "__main__":
         "hyperparameters",
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
+    
+    # Parse config
+    config = None
+    if args.config_path:
+        with open(args.config_path, "r") as config_file:
+            config = yaml.safe_load(config_file)
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -236,10 +272,13 @@ if __name__ == "__main__":
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
 
     # rewards setup
-    reward_sources = [
-        ExtrinsicRewardGenerator(),
-        #NegativeOneRewardGenerator()
-    ]
+    if config is None:
+        reward_sources = [
+            ExtrinsicRewardGenerator(),
+            #NegativeOneRewardGenerator()
+        ]
+    else:
+        reward_sources = parse_reward_sources(config["RewardSources"])
     num_heads = len(reward_sources)
     print(f"Using {num_heads} heads")
 
@@ -311,9 +350,11 @@ if __name__ == "__main__":
             if global_step % args.update_frequency == 0:
                 data = rb.sample(args.batch_size)
                 
-                # Generate rewards
-                rewards = [source.generate_rewards(data).to(device) for source in reward_sources]
-                rewards = torch.stack([r.flatten() for r in rewards], dim=0)
+                # Generate data for training each head
+                rewards, dones, gammas = zip(*[source.generate_data(data) for source in reward_sources])
+                rewards = torch.stack([r.flatten() for r in rewards], dim=0).to(device)
+                dones = torch.stack([d.flatten() for d in dones], dim=0).to(device)
+                gammas = torch.FloatTensor(gammas).to(device)
                 
                 # CRITIC training
                 with torch.no_grad():
@@ -326,7 +367,7 @@ if __name__ == "__main__":
                     )
                     # adapt Q-target for discrete Q-function
                     min_qf_next_target = min_qf_next_target.sum(dim=-1)
-                    next_q_value = rewards + (1 - data.dones.flatten()) * args.gamma * min_qf_next_target
+                    next_q_value = rewards + (1 - dones) * gammas.reshape(-1,1) * min_qf_next_target
 
                 # use Q-values only for the taken actions
                 qf1_values = new_qf1(data.observations)
