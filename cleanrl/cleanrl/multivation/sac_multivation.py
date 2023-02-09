@@ -249,16 +249,16 @@ if __name__ == "__main__":
     print(f"Using {num_heads} heads")
 
     # agent setup
-    new_actor = NHeadActor(num_heads, envs.single_observation_space.shape, envs.single_action_space.n).to(device)
-    new_qf1 = NHeadSoftQNetwork(num_heads, envs.single_observation_space.shape, envs.single_action_space.n).to(device)
-    new_qf2 = NHeadSoftQNetwork(num_heads, envs.single_observation_space.shape, envs.single_action_space.n).to(device)
-    new_qf1_target = NHeadSoftQNetwork(num_heads, envs.single_observation_space.shape, envs.single_action_space.n).to(device)
-    new_qf2_target = NHeadSoftQNetwork(num_heads, envs.single_observation_space.shape, envs.single_action_space.n).to(device)
-    new_qf1_target.load_state_dict(new_qf1.state_dict())
-    new_qf2_target.load_state_dict(new_qf2.state_dict())
+    actor = NHeadActor(num_heads, envs.single_observation_space.shape, envs.single_action_space.n).to(device)
+    qf1 = NHeadSoftQNetwork(num_heads, envs.single_observation_space.shape, envs.single_action_space.n).to(device)
+    qf2 = NHeadSoftQNetwork(num_heads, envs.single_observation_space.shape, envs.single_action_space.n).to(device)
+    qf1_target = NHeadSoftQNetwork(num_heads, envs.single_observation_space.shape, envs.single_action_space.n).to(device)
+    qf2_target = NHeadSoftQNetwork(num_heads, envs.single_observation_space.shape, envs.single_action_space.n).to(device)
+    qf1_target.load_state_dict(qf1.state_dict())
+    qf2_target.load_state_dict(qf2.state_dict())
     # TRY NOT TO MODIFY: eps=1e-4 increases numerical stability
-    q_optimizer = optim.Adam(list(new_qf1.parameters()) + list(new_qf2.parameters()), lr=args.q_lr, eps=1e-4)
-    actor_optimizer = optim.Adam(list(new_actor.parameters()), lr=args.policy_lr, eps=1e-4)
+    q_optimizer = optim.Adam(list(qf1.parameters()) + list(qf2.parameters()), lr=args.q_lr, eps=1e-4)
+    actor_optimizer = optim.Adam(list(actor.parameters()), lr=args.policy_lr, eps=1e-4)
 
     # Automatic entropy tuning
     if args.autotune:
@@ -286,7 +286,7 @@ if __name__ == "__main__":
             # envs.action_space.sample() is not deterministic for some reason
             actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
         else:
-            actions, _, _ = new_actor.get_action(torch.Tensor(obs).to(device))
+            actions, _, _ = actor.get_action(torch.Tensor(obs).to(device))
             actions = actions[0] # Head 0
             actions = actions.detach().cpu().numpy()
 
@@ -324,9 +324,9 @@ if __name__ == "__main__":
                 
                 # CRITIC training
                 with torch.no_grad():
-                    _, next_state_log_pi, next_state_action_probs = new_actor.get_action(data.next_observations)
-                    qf1_next_target = new_qf1_target(data.next_observations)
-                    qf2_next_target = new_qf2_target(data.next_observations)
+                    _, next_state_log_pi, next_state_action_probs = actor.get_action(data.next_observations)
+                    qf1_next_target = qf1_target(data.next_observations)
+                    qf2_next_target = qf2_target(data.next_observations)
                     # we can use the action probabilities instead of MC sampling to estimate the expectation
                     min_qf_next_target = next_state_action_probs * (
                         torch.min(qf1_next_target, qf2_next_target) - new_alpha.reshape(-1,1,1) * next_state_log_pi
@@ -336,8 +336,8 @@ if __name__ == "__main__":
                     next_q_value = rewards + (1 - dones) * gammas.reshape(-1,1) * min_qf_next_target
 
                 # use Q-values only for the taken actions
-                qf1_values = new_qf1(data.observations)
-                qf2_values = new_qf2(data.observations)
+                qf1_values = qf1(data.observations)
+                qf2_values = qf2(data.observations)
                 expanded_actions = data.actions.view(1, -1, 1).expand(num_heads, -1, 1).long()
                 qf1_a_values = qf1_values.gather(-1, expanded_actions).squeeze(-1)
                 qf2_a_values = qf2_values.gather(-1, expanded_actions).squeeze(-1)
@@ -350,10 +350,10 @@ if __name__ == "__main__":
                 q_optimizer.step()
 
                 # ACTOR training
-                _, log_pi, action_probs = new_actor.get_action(data.observations)
+                _, log_pi, action_probs = actor.get_action(data.observations)
                 with torch.no_grad():
-                    qf1_values = new_qf1(data.observations)
-                    qf2_values = new_qf2(data.observations)
+                    qf1_values = qf1(data.observations)
+                    qf2_values = qf2(data.observations)
                     min_qf_values = torch.min(qf1_values, qf2_values)
                 # no need for reparameterization, the expectation can be calculated for discrete actions
                 actor_losses = (action_probs * (new_alpha.reshape(-1,1,1) * log_pi - min_qf_values))
@@ -376,9 +376,9 @@ if __name__ == "__main__":
 
             # update the target networks
             if global_step % args.target_network_frequency == 0:
-                for param, target_param in zip(new_qf1.parameters(), new_qf1_target.parameters()):
+                for param, target_param in zip(qf1.parameters(), qf1_target.parameters()):
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
-                for param, target_param in zip(new_qf2.parameters(), new_qf2_target.parameters()):
+                for param, target_param in zip(qf2.parameters(), qf2_target.parameters()):
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
 
             if global_step % 100 == 0:
