@@ -45,8 +45,11 @@ class CuriosityRewardGenerator(RewardGenerator):
         self.forward_model = torch.Sequential()
         self.inverse_forward_model = torch.Sequential()
         
-        self.fm_optimizer = torch.optim.Adam(self.forward_model.parameters(), lr=learning_rate, eps=1e-4)
-        self.inverse_fm_optimizer = torch.optim.Adam(self.inverse_forward_model.parameters(), lr=learning_rate, eps=1e-4)
+        self.optimizer = torch.optim.Adam([
+            *self.forward_model.parameters(),
+            *self.inverse_forward_model.parameters(),
+            *self.embedding_net.parameters()
+        ], lr=learning_rate, eps=1e-4)
         
     def generate_rewards(self, samples: ReplayBufferSamples) -> torch.Tensor:
         return torch.full(samples.rewards.shape, -1)
