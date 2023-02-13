@@ -3,18 +3,19 @@ import gym
 import torch
 from stable_baselines3.common.buffers import ReplayBufferSamples
 
-from models import Conv2DEmbedding, OneHotForwardModel, DiscreteActionPredictor
+from models import Conv2DEmbedding, OneHotForwardModel, DiscreteActionPredictor, OneHotForwardModelResiduals
 
 from abc import ABC, abstractmethod
 from typing import Dict
 
 class RewardGenerator(ABC):
-    def __init__(self, reward_decay: float=0.99, use_dones: bool=True):
+    def __init__(self, device, reward_decay: float=0.99, use_dones: bool=True):
         self.reward_decay = reward_decay
         self.use_dones = use_dones
+        self.device = device
         
     def generate_data(self, samples: ReplayBufferSamples):
-        dones = samples.dones if self.use_dones else torch.zeros(samples.dones.shape)
+        dones = samples.dones if self.use_dones else torch.zeros(samples.dones.shape, device=self.device)
         rewards = self.generate_rewards(samples)
         return rewards, dones, self.reward_decay
     
@@ -30,33 +31,34 @@ class RewardGenerator(ABC):
         return {}
     
     @classmethod
-    def from_config(cls, yaml_node, action_space: gym.spaces.Discrete, obs_space: gym.spaces.Box):
+    def from_config(cls, yaml_node, device, action_space: gym.spaces.Discrete, obs_space: gym.spaces.Box):
         return cls(
+            device,
             reward_decay=yaml_node["reward_decay"],
             use_dones=yaml_node["use_dones"],
         )
     
 class ExtrinsicRewardGenerator(RewardGenerator):
-    def __init__(self, reward_decay: float=0.99, use_dones: bool=True):
-        super().__init__(reward_decay=reward_decay, use_dones=use_dones)
+    def __init__(self, device, reward_decay: float=0.99, use_dones: bool=True):
+        super().__init__(device, reward_decay=reward_decay, use_dones=use_dones)
     
     def generate_rewards(self, samples: ReplayBufferSamples) -> torch.Tensor:
         return samples.rewards
     
 class NegativeOneRewardGenerator(RewardGenerator):
-    def __init__(self, reward_decay: float=0.99, use_dones: bool=True):
-        super().__init__(reward_decay=reward_decay, use_dones=use_dones)
+    def __init__(self, device, reward_decay: float=0.99, use_dones: bool=True):
+        super().__init__(device, reward_decay=reward_decay, use_dones=use_dones)
     
     def generate_rewards(self, samples: ReplayBufferSamples) -> torch.Tensor:
         return torch.full(samples.rewards.shape, -1)
     
 class CuriosityRewardGenerator(RewardGenerator):
-    def __init__(self, state_shape, embedding_size, num_actions, learning_rate=0.0003, reward_decay: float=0.99, use_dones: bool=True):
-        super().__init__(reward_decay=reward_decay, use_dones=use_dones)
+    def __init__(self, device, state_shape, embedding_size, num_actions, learning_rate=0.0003, reward_decay: float=0.99, use_dones: bool=True):
+        super().__init__(device, reward_decay=reward_decay, use_dones=use_dones)
         
-        self.embedding_net = Conv2DEmbedding(state_shape, embedding_size)
-        self.forward_model = OneHotForwardModel(embedding_size, num_actions)
-        self.inverse_forward_model = DiscreteActionPredictor(embedding_size, num_actions)
+        self.embedding_net = Conv2DEmbedding(state_shape, embedding_size).to(self.device)
+        self.forward_model = OneHotForwardModelResiduals(embedding_size, 512, num_actions).to(self.device)
+        self.inverse_forward_model = DiscreteActionPredictor(embedding_size, num_actions).to(self.device)
         
         self.optimizer = torch.optim.Adam([
             *self.forward_model.parameters(),
@@ -97,8 +99,9 @@ class CuriosityRewardGenerator(RewardGenerator):
         }
     
     @classmethod
-    def from_config(cls, yaml_node, action_space: gym.spaces.Discrete, obs_space: gym.spaces.Box):
+    def from_config(cls, yaml_node, device, action_space: gym.spaces.Discrete, obs_space: gym.spaces.Box):
         return cls(
+            device,
             state_shape=obs_space.shape,
             num_actions=action_space.n,
             embedding_size=yaml_node["embedding_size"],

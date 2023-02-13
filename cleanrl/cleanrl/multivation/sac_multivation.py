@@ -81,7 +81,7 @@ def parse_args():
     # fmt: on
     return args
 
-def parse_reward_sources(yaml_node, env: gym.vector.SyncVectorEnv):
+def parse_reward_sources(yaml_node, device, env: gym.vector.SyncVectorEnv):
     source_types = {
         "extrinsic": ExtrinsicRewardGenerator,
         "curiosity": CuriosityRewardGenerator,
@@ -90,7 +90,7 @@ def parse_reward_sources(yaml_node, env: gym.vector.SyncVectorEnv):
     reward_sources = []
     for source_node in yaml_node:
         reward_type = source_node["type"].lower()
-        new_source = source_types[reward_type].from_config(source_node, env.single_action_space, env.single_observation_space)
+        new_source = source_types[reward_type].from_config(source_node, device, env.single_action_space, env.single_observation_space)
         reward_sources.append(new_source)
     return reward_sources
 
@@ -242,8 +242,9 @@ if __name__ == "__main__":
     # rewards setup
     if config is None:
         reward_sources = [
-            ExtrinsicRewardGenerator(),
+            #ExtrinsicRewardGenerator(device),
             CuriosityRewardGenerator(
+                device,
                 state_shape=envs.single_observation_space.shape,
                 embedding_size=128,
                 num_actions=envs.single_action_space.n
@@ -251,7 +252,7 @@ if __name__ == "__main__":
             #NegativeOneRewardGenerator()
         ]
     else:
-        reward_sources = parse_reward_sources(config["RewardSources"], envs)
+        reward_sources = parse_reward_sources(config["RewardSources"], device, envs)
     num_heads = len(reward_sources)
     print(f"Using {num_heads} heads")
 
@@ -325,8 +326,8 @@ if __name__ == "__main__":
                 
                 # Generate data for training each head
                 rewards, dones, gammas = zip(*[source.generate_data(data) for source in reward_sources])
-                rewards = torch.stack([r.flatten() for r in rewards], dim=0).to(device)
-                dones = torch.stack([d.flatten() for d in dones], dim=0).to(device)
+                rewards = torch.stack([r.flatten() for r in rewards], dim=0)
+                dones = torch.stack([d.flatten() for d in dones], dim=0)
                 gammas = torch.FloatTensor(gammas).to(device)
                 
                 # CRITIC training
@@ -396,19 +397,22 @@ if __name__ == "__main__":
 
             if global_step % 100 == 0:
                 for i in range(num_heads):
-                    writer.add_scalar(f"qf1_values/head_{i}", qf1_a_values[i].mean().item(), global_step)
-                    writer.add_scalar(f"qf2_values/head_{i}", qf2_a_values[i].mean().item(), global_step)
-                    writer.add_scalar(f"qf1_loss/head_{i}", qf1_losses[i].item(), global_step)
-                    writer.add_scalar(f"qf2_loss/head_{i}", qf2_losses[i].item(), global_step)
-                    writer.add_scalar(f"actor_loss/head_{i}", actor_losses[i].item(), global_step)
-                    writer.add_scalar(f"alpha/head_{i}", new_alpha[i], global_step)
+                    writer.add_scalar(f"head_{i}/qf1_values", qf1_a_values[i].mean().item(), global_step)
+                    writer.add_scalar(f"head_{i}/qf2_values", qf2_a_values[i].mean().item(), global_step)
+                    writer.add_scalar(f"head_{i}/qf1_loss", qf1_losses[i].item(), global_step)
+                    writer.add_scalar(f"head_{i}/qf2_loss", qf2_losses[i].item(), global_step)
+                    writer.add_scalar(f"head_{i}/actor_loss", actor_losses[i].item(), global_step)
+                    writer.add_scalar(f"head_{i}/alpha", new_alpha[i], global_step)
                     if args.autotune:
-                        writer.add_scalar(f"alpha_loss/head_{i}", alpha_losses[i].item(), global_step)
+                        writer.add_scalar(f"head_{i}/alpha_loss", alpha_losses[i].item(), global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
                 
                 for name, metric in generator_metrics.items():
                     writer.add_scalar(name, metric, global_step)
+                    
+                for i, val in enumerate(rewards.mean(-1)):
+                    writer.add_scalar(f"rewards/head_{i}", val, global_step)
                 
     envs.close()
     writer.close()
