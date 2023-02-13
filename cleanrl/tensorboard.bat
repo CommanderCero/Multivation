@@ -1,1 +1,1 @@
-poetry run tensorboard --logdir=runs --port=6007
+poetry run tensorboard --logdir=cleanrl/multivation/runs --port=6007

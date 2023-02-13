@@ -6,7 +6,7 @@ import time
 import yaml
 from distutils.util import strtobool
 
-from rewards import ExtrinsicRewardGenerator
+from rewards import ExtrinsicRewardGenerator, CuriosityRewardGenerator
 
 import gym
 import numpy as np
@@ -81,15 +81,17 @@ def parse_args():
     # fmt: on
     return args
 
-def parse_reward_sources(yaml_node):
+def parse_reward_sources(yaml_node, env: gym.vector.SyncVectorEnv):
     source_types = {
-        "extrinsic": ExtrinsicRewardGenerator
+        "extrinsic": ExtrinsicRewardGenerator,
+        "curiosity": CuriosityRewardGenerator,
     }
     
     reward_sources = []
     for source_node in yaml_node:
         reward_type = source_node["type"].lower()
-        reward_sources.append(source_types[reward_type].from_config(source_node))
+        new_source = source_types[reward_type].from_config(source_node, env.single_action_space, env.single_observation_space)
+        reward_sources.append(new_source)
     return reward_sources
 
 def make_env(env_id, seed, idx, capture_video, run_name):
@@ -241,10 +243,15 @@ if __name__ == "__main__":
     if config is None:
         reward_sources = [
             ExtrinsicRewardGenerator(),
+            CuriosityRewardGenerator(
+                state_shape=envs.single_observation_space.shape,
+                embedding_size=128,
+                num_actions=envs.single_action_space.n
+            )
             #NegativeOneRewardGenerator()
         ]
     else:
-        reward_sources = parse_reward_sources(config["RewardSources"])
+        reward_sources = parse_reward_sources(config["RewardSources"], envs)
     num_heads = len(reward_sources)
     print(f"Using {num_heads} heads")
 
@@ -373,6 +380,12 @@ if __name__ == "__main__":
                     alpha_loss.backward()
                     a_optimizer.step()
                     new_alpha = new_log_alpha.exp().detach()
+                    
+                # Update reward generators
+                generator_metrics = {}
+                for source in reward_sources:
+                    metrics = source.update(data)
+                    generator_metrics.update({f"{source.__class__.__name__}/{key}" : value for key, value in metrics.items()})
 
             # update the target networks
             if global_step % args.target_network_frequency == 0:
@@ -383,17 +396,19 @@ if __name__ == "__main__":
 
             if global_step % 100 == 0:
                 for i in range(num_heads):
-                    writer.add_scalar(f"head_{i}/losses/qf1_values", qf1_a_values[i].mean().item(), global_step)
-                    writer.add_scalar(f"head_{i}/losses/qf2_values", qf2_a_values[i].mean().item(), global_step)
-                    writer.add_scalar(f"head_{i}/losses/qf1_loss", qf1_losses[i].item(), global_step)
-                    writer.add_scalar(f"head_{i}/losses/qf2_loss", qf2_losses[i].item(), global_step)
-                    writer.add_scalar(f"head_{i}/losses/actor_loss", actor_losses[i].item(), global_step)
-                    writer.add_scalar(f"head_{i}/losses/alpha", new_alpha[i], global_step)
+                    writer.add_scalar(f"qf1_values/head_{i}", qf1_a_values[i].mean().item(), global_step)
+                    writer.add_scalar(f"qf2_values/head_{i}", qf2_a_values[i].mean().item(), global_step)
+                    writer.add_scalar(f"qf1_loss/head_{i}", qf1_losses[i].item(), global_step)
+                    writer.add_scalar(f"qf2_loss/head_{i}", qf2_losses[i].item(), global_step)
+                    writer.add_scalar(f"actor_loss/head_{i}", actor_losses[i].item(), global_step)
+                    writer.add_scalar(f"alpha/head_{i}", new_alpha[i], global_step)
                     if args.autotune:
-                        writer.add_scalar(f"head_{i}/losses/alpha_loss", alpha_losses[i].item(), global_step)
+                        writer.add_scalar(f"alpha_loss/head_{i}", alpha_losses[i].item(), global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
                 
-
+                for name, metric in generator_metrics.items():
+                    writer.add_scalar(name, metric, global_step)
+                
     envs.close()
     writer.close()
