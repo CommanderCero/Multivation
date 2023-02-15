@@ -7,6 +7,7 @@ import yaml
 from distutils.util import strtobool
 
 from rewards import ExtrinsicRewardGenerator, CuriosityRewardGenerator
+from buffers import RolloutBuffer
 
 import gym
 import numpy as np
@@ -284,6 +285,12 @@ if __name__ == "__main__":
         device,
         handle_timeout_termination=True,
     )
+    rollout_buffer = RolloutBuffer(
+        args.batch_size,
+        1,
+        envs.single_observation_space,
+        envs.single_action_space,
+    )
     start_time = time.time()
 
     # TRY NOT TO MODIFY: start the game
@@ -315,12 +322,21 @@ if __name__ == "__main__":
             if d:
                 real_next_obs[idx] = infos[idx]["terminal_observation"]
         rb.add(obs, real_next_obs, actions, rewards, dones, infos)
-
+        
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
 
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
+            rollout_buffer.add(obs, actions, real_next_obs, rewards, dones)
+            if rollout_buffer.is_full:
+                # Update reward generators
+                rollout_data = rollout_buffer.flush_data()
+                generator_metrics = {}
+                for source in reward_sources:
+                    metrics = source.update(rollout_data)
+                    generator_metrics.update({f"{source.__class__.__name__}/{key}" : value for key, value in metrics.items()})
+            
             if global_step % args.update_frequency == 0:
                 data = rb.sample(args.batch_size)
                 
@@ -381,12 +397,6 @@ if __name__ == "__main__":
                     alpha_loss.backward()
                     a_optimizer.step()
                     new_alpha = new_log_alpha.exp().detach()
-                    
-                # Update reward generators
-                generator_metrics = {}
-                for source in reward_sources:
-                    metrics = source.update(data)
-                    generator_metrics.update({f"{source.__class__.__name__}/{key}" : value for key, value in metrics.items()})
 
             # update the target networks
             if global_step % args.target_network_frequency == 0:
