@@ -13,13 +13,11 @@ class Conv2DEmbedding(nn.Module):
     def __init__(self, input_shape, embedding_size):
         super().__init__()
         self.conv_net = nn.Sequential(
-            nn.Conv2d(in_channels=input_shape[0], out_channels=32, kernel_size=(3, 3), stride=2, padding=1),
+            nn.Conv2d(in_channels=input_shape[0], out_channels=32, kernel_size=8, stride=4),
             nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=(3, 3), stride=2, padding=1),
+            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2),
             nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=(3, 3), stride=2, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=32, kernel_size=(3, 3), stride=2, padding=1),
+            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1),
             nn.ReLU(),
         )
         
@@ -157,12 +155,16 @@ class DiscreteActionPredictor(nn.Module):
         self.embedding_size = embedding_size
         
         self.logits_net = nn.Sequential(
-            nn.Linear(self.embedding_size * 2, self.embedding_size),
+            nn.Linear(self.embedding_size * 2, 512),
             nn.ReLU(),
-            nn.Linear(self.embedding_size, self.num_actions)
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, self.num_actions)
         )
     
-    def forward(self, states, next_states) -> torch.distributions.Distribution:
+    def forward(self, states, next_states):
         '''
         Predicts the executed actions from the given (state, next_state) pairs.
         Returns logits for each possible action.
