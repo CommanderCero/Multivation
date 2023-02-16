@@ -290,6 +290,7 @@ if __name__ == "__main__":
         1,
         envs.single_observation_space,
         envs.single_action_space,
+        device
     )
     start_time = time.time()
 
@@ -322,9 +323,6 @@ if __name__ == "__main__":
             if d:
                 real_next_obs[idx] = infos[idx]["terminal_observation"]
         rb.add(obs, real_next_obs, actions, rewards, dones, infos)
-        
-        # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
-        obs = next_obs
 
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
@@ -406,6 +404,7 @@ if __name__ == "__main__":
                     target_param.data.copy_(args.tau * param.data + (1 - args.tau) * target_param.data)
 
             if global_step % 100 == 0:
+                entropies = -torch.mean((log_pi * action_probs).sum(dim=-1), dim=-1)
                 for i in range(num_heads):
                     writer.add_scalar(f"head_{i}/qf1_values", qf1_a_values[i].mean().item(), global_step)
                     writer.add_scalar(f"head_{i}/qf2_values", qf2_a_values[i].mean().item(), global_step)
@@ -413,6 +412,7 @@ if __name__ == "__main__":
                     writer.add_scalar(f"head_{i}/qf2_loss", qf2_losses[i].item(), global_step)
                     writer.add_scalar(f"head_{i}/actor_loss", actor_losses[i].item(), global_step)
                     writer.add_scalar(f"head_{i}/alpha", new_alpha[i], global_step)
+                    writer.add_scalar(f"head_{i}/entropy", entropies[i].cpu().item(), global_step)
                     if args.autotune:
                         writer.add_scalar(f"head_{i}/alpha_loss", alpha_losses[i].item(), global_step)
                 print("SPS:", int(global_step / (time.time() - start_time)))
@@ -423,6 +423,9 @@ if __name__ == "__main__":
                     
                 for i, val in enumerate(rewards.mean(-1)):
                     writer.add_scalar(f"rewards/head_{i}", val, global_step)
+                    
+        # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
+        obs = next_obs
                 
     envs.close()
     writer.close()

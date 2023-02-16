@@ -72,7 +72,7 @@ class CuriosityRewardGenerator(RewardGenerator):
         next_state_embeddings = self.embedding_net(samples.next_observations)
         next_state_predictions = self.forward_model(state_embeddings, samples.actions)
         
-        rewards = torch.norm(next_state_predictions - next_state_embeddings, dim=1, p=2)
+        rewards = torch.mean((next_state_predictions - next_state_embeddings) ** 2, dim=-1)
         return rewards
         
     def update(self, samples: ReplayBufferSamples) -> Dict[str, float]:

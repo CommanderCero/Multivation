@@ -9,13 +9,15 @@ class RolloutBuffer:
             size: int,
             num_envs: int,
             observation_space: gym.spaces,
-            action_space: gym.spaces.Space
+            action_space: gym.spaces.Space,
+            device: torch.device
         ):
         assert isinstance(observation_space, gym.spaces.Box), "ReplayMemory currently only supports gym.spaces.Box as observation_space"
         assert isinstance(action_space, gym.spaces.Discrete), "ReplayMemory currently only supports gym.spaces.Discrete as action_space"
         
         self.max_size = size
         self.num_envs = num_envs
+        self.device = device
         self.current_pos = 0
         
         self.states = np.empty([self.max_size, num_envs, *observation_space.shape], dtype=observation_space.dtype)
@@ -39,11 +41,11 @@ class RolloutBuffer:
         self.current_pos = 0
         
         return ReplayBufferSamples(
-            observations = torch.from_numpy(self.swap_and_flatten(self.states)),
-            actions = torch.from_numpy(self.swap_and_flatten(self.actions)),
-            next_observations = torch.from_numpy(self.swap_and_flatten(self.next_states)),
-            dones = torch.from_numpy(self.swap_and_flatten(self.dones)),
-            rewards = torch.from_numpy(self.swap_and_flatten(self.rewards))
+            observations = torch.from_numpy(self.swap_and_flatten(self.states)).to(self.device),
+            actions = torch.from_numpy(self.swap_and_flatten(self.actions)).to(self.device),
+            next_observations = torch.from_numpy(self.swap_and_flatten(self.next_states)).to(self.device),
+            dones = torch.from_numpy(self.swap_and_flatten(self.dones)).to(self.device),
+            rewards = torch.from_numpy(self.swap_and_flatten(self.rewards)).to(self.device)
         )
     
     @property
