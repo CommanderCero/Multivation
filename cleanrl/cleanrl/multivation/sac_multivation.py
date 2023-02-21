@@ -7,7 +7,6 @@ import yaml
 from distutils.util import strtobool
 
 from rewards import ExtrinsicRewardGenerator, CuriosityRewardGenerator
-from buffers import RolloutBuffer
 
 import gym
 import numpy as np
@@ -250,7 +249,6 @@ if __name__ == "__main__":
                 embedding_size=128,
                 num_actions=envs.single_action_space.n
             )
-            #NegativeOneRewardGenerator()
         ]
     else:
         reward_sources = parse_reward_sources(config["RewardSources"], device, envs)
@@ -284,13 +282,6 @@ if __name__ == "__main__":
         envs.single_action_space,
         device,
         handle_timeout_termination=True,
-    )
-    rollout_buffer = RolloutBuffer(
-        args.batch_size,
-        1,
-        envs.single_observation_space,
-        envs.single_action_space,
-        device
     )
     start_time = time.time()
 
@@ -326,17 +317,13 @@ if __name__ == "__main__":
 
         # ALGO LOGIC: training.
         if global_step > args.learning_starts:
-            rollout_buffer.add(obs, actions, real_next_obs, rewards, dones)
-            if rollout_buffer.is_full:
-                # Update reward generators
-                rollout_data = rollout_buffer.flush_data()
-                generator_metrics = {}
-                for source in reward_sources:
-                    metrics = source.update(rollout_data)
-                    generator_metrics.update({f"{source.__class__.__name__}/{key}" : value for key, value in metrics.items()})
-            
             if global_step % args.update_frequency == 0:
                 data = rb.sample(args.batch_size)
+                
+                generator_metrics = {}
+                for source in reward_sources:
+                    metrics = source.update(data)
+                    generator_metrics.update({f"{source.__class__.__name__}/{key}" : value for key, value in metrics.items()})
                 
                 # Generate data for training each head
                 rewards, dones, gammas = zip(*[source.generate_data(data) for source in reward_sources])
@@ -421,8 +408,10 @@ if __name__ == "__main__":
                 for name, metric in generator_metrics.items():
                     writer.add_scalar(name, metric, global_step)
                     
-                for i, val in enumerate(rewards.mean(-1)):
-                    writer.add_scalar(f"rewards/head_{i}", val, global_step)
+                for i, head_rewards in enumerate(rewards):
+                    writer.add_scalar(f"head_{i}/mean_rewards", head_rewards.mean().item(), global_step)
+                    writer.add_scalar(f"head_{i}/min_rewards", head_rewards.min().item(), global_step)
+                    writer.add_scalar(f"head_{i}/max_rewards", head_rewards.max().item(), global_step)
                     
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs

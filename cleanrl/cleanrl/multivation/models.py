@@ -14,16 +14,20 @@ class Conv2DEmbedding(nn.Module):
         super().__init__()
         self.conv_net = nn.Sequential(
             nn.Conv2d(in_channels=input_shape[0], out_channels=32, kernel_size=8, stride=4),
+            nn.BatchNorm2d(num_features=32),
             nn.ReLU(),
             nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2),
+            nn.BatchNorm2d(num_features=64),
             nn.ReLU(),
             nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1),
+            nn.BatchNorm2d(num_features=64),
             nn.ReLU(),
         )
         
         input_size = get_output_count(self.conv_net, input_shape)
         self.out_net = nn.Sequential(
-            nn.Linear(input_size, embedding_size)
+            nn.Linear(input_size, embedding_size),
+            nn.BatchNorm1d(embedding_size)
         )
         
     def forward(self, X):

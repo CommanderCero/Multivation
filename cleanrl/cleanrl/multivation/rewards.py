@@ -1,7 +1,9 @@
 import gym
+import numpy as np
 
 import torch
 from stable_baselines3.common.buffers import ReplayBufferSamples
+from stable_baselines3.common.running_mean_std import RunningMeanStd
 
 from models import Conv2DEmbedding, OneHotForwardModel, DiscreteActionPredictor, OneHotForwardModelResiduals
 
@@ -44,14 +46,7 @@ class ExtrinsicRewardGenerator(RewardGenerator):
     
     def generate_rewards(self, samples: ReplayBufferSamples) -> torch.Tensor:
         return samples.rewards
-    
-class NegativeOneRewardGenerator(RewardGenerator):
-    def __init__(self, device, reward_decay: float=0.99, use_dones: bool=True):
-        super().__init__(device, reward_decay=reward_decay, use_dones=use_dones)
-    
-    def generate_rewards(self, samples: ReplayBufferSamples) -> torch.Tensor:
-        return torch.full(samples.rewards.shape, -1)
-    
+
 class CuriosityRewardGenerator(RewardGenerator):
     def __init__(self, device, state_shape, embedding_size, num_actions, learning_rate=0.0003, reward_decay: float=0.99, use_dones: bool=True):
         super().__init__(device, reward_decay=reward_decay, use_dones=use_dones)
@@ -59,6 +54,9 @@ class CuriosityRewardGenerator(RewardGenerator):
         self.embedding_net = Conv2DEmbedding(state_shape, embedding_size).to(self.device)
         self.forward_model = OneHotForwardModelResiduals(embedding_size, 512, num_actions).to(self.device)
         self.inverse_forward_model = DiscreteActionPredictor(embedding_size, num_actions).to(self.device)
+        
+        self.reward_estimation = 0
+        self.reward_moments = RunningMeanStd()
         
         self.optimizer = torch.optim.Adam([
             *self.forward_model.parameters(),
@@ -68,12 +66,20 @@ class CuriosityRewardGenerator(RewardGenerator):
     
     @torch.inference_mode()
     def generate_rewards(self, samples: ReplayBufferSamples) -> torch.Tensor:
+        # Compute reward
         state_embeddings = self.embedding_net(samples.observations)
         next_state_embeddings = self.embedding_net(samples.next_observations)
         next_state_predictions = self.forward_model(state_embeddings, samples.actions)
-        
         rewards = torch.mean((next_state_predictions - next_state_embeddings) ** 2, dim=-1)
-        return rewards
+        
+        # Normalize
+        reward_ts = np.empty(rewards.shape)
+        for i, r in enumerate(rewards):
+            self.reward_estimation = 0.99 * self.reward_estimation + r
+            reward_ts[i] = self.reward_estimation
+        self.reward_moments.update(reward_ts)
+        
+        return rewards / np.sqrt(self.reward_moments.var)
         
     def update(self, samples: ReplayBufferSamples) -> Dict[str, float]:
         """
@@ -84,9 +90,9 @@ class CuriosityRewardGenerator(RewardGenerator):
         state_embeddings = self.embedding_net(samples.observations)
         next_state_embeddings = self.embedding_net(samples.next_observations)
         
-        fm_loss = self.forward_model.compute_loss(state_embeddings, samples.actions, next_state_embeddings)
+        fm_loss = self.forward_model.compute_loss(state_embeddings.detach(), samples.actions, next_state_embeddings.detach())
         inverse_fm_loss = self.inverse_forward_model.compute_loss(state_embeddings, next_state_embeddings, samples.actions)
-        loss = 0.5 * fm_loss + 0.5 * inverse_fm_loss
+        loss = inverse_fm_loss + fm_loss
         
         # Update
         self.optimizer.zero_grad()
