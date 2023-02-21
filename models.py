@@ -203,9 +203,11 @@ def layer_init(layer, bias_const=0.0):
 # NOTE: Sharing a CNN encoder between Actor and Critics is not recommended for SAC without stopping actor gradients
 # See the SAC+AE paper https://arxiv.org/abs/1910.01741 for more info
 # TL;DR The actor's gradients mess up the representation when using a joint encoder
-class NHeadSoftQNetwork(nn.Module):
+class NHeadCritic(nn.Module):
     def __init__(self, num_heads, observation_shape, num_actions):
         super().__init__()
+        self.num_heads = num_heads
+        
         self.body = nn.Sequential(
             layer_init(nn.Conv2d(observation_shape[0], 32, kernel_size=8, stride=4)),
             nn.ReLU(),
@@ -237,6 +239,8 @@ class NHeadSoftQNetwork(nn.Module):
 class NHeadActor(nn.Module):
     def __init__(self, num_heads, observation_shape, num_actions):
         super().__init__()
+        self.num_heads = num_heads
+        
         self.body = nn.Sequential(
             layer_init(nn.Conv2d(observation_shape[0], 32, kernel_size=8, stride=4)),
             nn.ReLU(),
