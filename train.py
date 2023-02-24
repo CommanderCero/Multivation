@@ -13,13 +13,6 @@ from nhead_sac import NHeadSAC
 import gym
 import numpy as np
 import torch
-from stable_baselines3.common.atari_wrappers import (
-    ClipRewardEnv,
-    EpisodicLifeEnv,
-    FireResetEnv,
-    MaxAndSkipEnv,
-    NoopResetEnv,
-)
 from stable_baselines3.common.buffers import ReplayBuffer
 from torch.utils.tensorboard import SummaryWriter
 
@@ -47,7 +40,7 @@ def parse_args():
         help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=5000000,
         help="total timesteps of the experiments")
-    parser.add_argument("--buffer-size", type=int, default=int(1e4),
+    parser.add_argument("--buffer-size", type=int, default=int(1e5),
         help="the replay memory buffer size") # smaller than in original paper but evaluation is done only for 100k steps anyway
     parser.add_argument("--gamma", type=float, default=0.99,
         help="the discount factor gamma")
@@ -90,17 +83,7 @@ def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
-        if capture_video:
-            if idx == 0:
-                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-        env = NoopResetEnv(env, noop_max=30)
-        env = MaxAndSkipEnv(env, skip=4)
-        env = EpisodicLifeEnv(env)
-        if "FIRE" in env.unwrapped.get_action_meanings():
-            env = FireResetEnv(env)
-        env = ClipRewardEnv(env)
-        env = gym.wrappers.ResizeObservation(env, (84, 84))
-        env = gym.wrappers.GrayScaleObservation(env)
+        env = gym.wrappers.AtariPreprocessing(env, frame_skip=4, terminal_on_life_loss=True, scale_obs=True)
         env = gym.wrappers.FrameStack(env, 4)
         env.seed(seed)
         env.action_space.seed(seed)

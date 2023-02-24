@@ -31,7 +31,6 @@ class Conv2DEmbedding(nn.Module):
         )
         
     def forward(self, X):
-        X = X.float() / 255.0
         X = self.conv_net(X)
         X = torch.flatten(X, start_dim=1)
         X = self.out_net(X)
