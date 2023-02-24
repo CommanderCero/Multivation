@@ -2,6 +2,7 @@ import gym
 import numpy as np
 
 import torch
+import torch.nn.functional as F
 from stable_baselines3.common.buffers import ReplayBufferSamples
 from stable_baselines3.common.running_mean_std import RunningMeanStd
 
@@ -116,4 +117,88 @@ class CuriosityRewardGenerator(RewardGenerator):
             learning_rate=yaml_node["learning_rate"],
             reward_decay=yaml_node["reward_decay"],
             use_dones=yaml_node["use_dones"],
+        )
+    
+class RNDRewardGenerator(RewardGenerator):
+    def __init__(self,
+            device,
+            state_shape,
+            embedding_size,
+            num_actions,
+            learning_rate=0.0003,
+            reward_decay: float=0.99,
+            use_dones: bool=True,
+            use_reward_norm=True,
+            use_obs_norm=True
+        ):
+        super().__init__(device, reward_decay=reward_decay, use_dones=use_dones)
+        
+        self.use_reward_norm = use_reward_norm
+        self.use_obs_norm = use_obs_norm
+        
+        self.random_net = Conv2DEmbedding(state_shape, embedding_size, use_batch_norm=False).to(self.device)
+        self.predictor_net = Conv2DEmbedding(state_shape, embedding_size, use_batch_norm=False).to(self.device)
+        self.optimizer = torch.optim.Adam(self.predictor_net.parameters(), lr=learning_rate, eps=1e-4)
+        
+        if self.use_reward_norm:
+            self.reward_estimation = 0
+            self.reward_moments = RunningMeanStd()
+        if self.use_obs_norm:
+            self.obs_moments = RunningMeanStd(shape=state_shape)
+        
+    @torch.inference_mode()
+    def generate_rewards(self, samples: ReplayBufferSamples) -> torch.Tensor:
+        # Normalize observations
+        next_observations = samples.next_observations
+        if self.use_obs_norm:
+            self.obs_moments.update(next_observations.cpu().numpy())
+            next_observations = ((next_observations - self.obs_moments.mean) / np.sqrt(self.obs_moments.var)).clip(-5, 5)
+        
+        # Compute rewards
+        random_embedding = self.random_net(samples.next_observations)
+        embedding_prediction = self.predictor_net(samples.next_observations)
+        rewards = torch.mean((random_embedding - embedding_prediction) ** 2, dim=-1)
+        
+        # Normalize rewards
+        if self.use_reward_norm:
+            reward_ts = np.empty(rewards.shape)
+            for i, r in enumerate(rewards):
+                self.reward_estimation = 0.99 * self.reward_estimation + r
+                reward_ts[i] = self.reward_estimation
+            self.reward_moments.update(reward_ts)
+            rewards = rewards / np.sqrt(self.reward_moments.var)
+        
+        return rewards
+        
+    def update(self, samples: ReplayBufferSamples) -> Dict[str, float]:
+        next_observations = samples.next_observations
+        if self.use_obs_norm:
+            next_observations = (next_observations - self.obs_moments.mean) / np.sqrt(self.obs_moments.var).clip(-5, 5)
+        
+        # Do not train random network
+        with torch.no_grad():
+            random_embedding = self.random_net(samples.next_observations)
+        embedding_prediction = self.predictor_net(samples.next_observations)
+        
+        distillation_loss = F.mse_loss(embedding_prediction, random_embedding)
+        self.optimizer.zero_grad()
+        distillation_loss.backward()
+        self.optimizer.step()
+        
+        return {
+            "distillation_loss": distillation_loss
+        }
+    
+    @classmethod
+    def from_config(cls, yaml_node, device, action_space: gym.spaces.Discrete, obs_space: gym.spaces.Box):
+        return cls(
+            device,
+            state_shape=obs_space.shape,
+            num_actions=action_space.n,
+            embedding_size=yaml_node["embedding_size"],
+            learning_rate=yaml_node["learning_rate"],
+            reward_decay=yaml_node["reward_decay"],
+            use_dones=yaml_node["use_dones"],
+            use_reward_norm=yaml_node["use_reward_norm"],
+            use_obs_norm=yaml_node["use_obs_norm"]
         )

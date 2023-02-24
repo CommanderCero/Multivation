@@ -6,7 +6,7 @@ import time
 import yaml
 from distutils.util import strtobool
 
-from rewards import ExtrinsicRewardGenerator, CuriosityRewardGenerator
+from rewards import ExtrinsicRewardGenerator, CuriosityRewardGenerator, RNDRewardGenerator
 from models import NHeadActor, NHeadCritic
 from nhead_sac import NHeadSAC
 
@@ -22,8 +22,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config_path", type=str, default=None,
         help="Path to a optional YAML config file.")
-    parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"),
-        help="the name of this experiment")
+    parser.add_argument("--exp-name", type=str, default="experiment", help="the name of this experiment")
     parser.add_argument("--seed", type=int, default=1, 
         help="seed of the experiment")
     parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
@@ -70,6 +69,7 @@ def parse_reward_sources(yaml_node, device, env: gym.vector.SyncVectorEnv):
     source_types = {
         "extrinsic": ExtrinsicRewardGenerator,
         "curiosity": CuriosityRewardGenerator,
+        "rnd": RNDRewardGenerator
     }
     
     reward_sources = []
@@ -94,12 +94,18 @@ def make_env(env_id, seed, idx, capture_video, run_name):
 
 if __name__ == "__main__":
     args = parse_args()
+    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+    print(f"Using {device}")
+    
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
         "hyperparameters",
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
+    writer.add_text("device", str(device))
+    model_folder = f"{writer.get_logdir()}/models"
+    os.makedirs(model_folder)
     
     # Parse config
     config = None
@@ -113,9 +119,6 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
-    device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
-    print(f"Using {device}")
-
     # env setup
     envs = gym.vector.SyncVectorEnv([make_env(args.env_id, args.seed, 0, args.capture_video, run_name)])
     assert isinstance(envs.single_action_space, gym.spaces.Discrete), "only discrete action space is supported"
@@ -124,11 +127,19 @@ if __name__ == "__main__":
     if config is None:
         reward_sources = [
             #ExtrinsicRewardGenerator(device),
-            CuriosityRewardGenerator(
+            #CuriosityRewardGenerator(
+            #    device,
+            #    state_shape=envs.single_observation_space.shape,
+            #    embedding_size=128,
+            #    num_actions=envs.single_action_space.n
+            #),
+            RNDRewardGenerator(
                 device,
                 state_shape=envs.single_observation_space.shape,
                 embedding_size=128,
-                num_actions=envs.single_action_space.n
+                num_actions=envs.single_action_space.n,
+                use_obs_norm=True,
+                use_reward_norm=True
             )
         ]
     else:
@@ -169,7 +180,8 @@ if __name__ == "__main__":
         update_frequency=args.update_frequency,
         target_network_frequency=args.target_network_frequency,
         save_model_frequency=args.save_model_frequency,
-        writer=writer
+        writer=writer,
+        model_folder=model_folder
     )
                 
     envs.close()

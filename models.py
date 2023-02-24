@@ -10,25 +10,25 @@ def get_output_count(net: nn.Module, input_shape: tuple):
         return int(np.prod(o.size()))
 
 class Conv2DEmbedding(nn.Module):
-    def __init__(self, input_shape, embedding_size):
+    def __init__(self, input_shape, embedding_size, use_batch_norm=True):
         super().__init__()
-        self.conv_net = nn.Sequential(
-            nn.Conv2d(in_channels=input_shape[0], out_channels=32, kernel_size=8, stride=4),
-            nn.BatchNorm2d(num_features=32),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=32, out_channels=64, kernel_size=4, stride=2),
-            nn.BatchNorm2d(num_features=64),
-            nn.ReLU(),
-            nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1),
-            nn.BatchNorm2d(num_features=64),
-            nn.ReLU(),
-        )
+        conv_layers = []
+        conv2d_params = [(32, 8, 4), (64, 4, 2), (64, 3, 1)]
+        last_channels = input_shape[0]
+        for c, ks, s in conv2d_params:
+            conv_layers.append(nn.Conv2d(in_channels=last_channels, out_channels=c, kernel_size=ks, stride=s))
+            if use_batch_norm:
+                conv_layers.append(nn.BatchNorm2d(num_features=c))
+            conv_layers.append(nn.ReLU())
+            last_channels = c
+        
+        self.conv_net = nn.Sequential(*conv_layers)
         
         input_size = get_output_count(self.conv_net, input_shape)
-        self.out_net = nn.Sequential(
-            nn.Linear(input_size, embedding_size),
-            nn.BatchNorm1d(embedding_size)
-        )
+        out_layers = [nn.Linear(input_size, embedding_size)]
+        if use_batch_norm:
+            out_layers.append(nn.BatchNorm1d(embedding_size))
+        self.out_net = nn.Sequential(*out_layers)
         
     def forward(self, X):
         X = self.conv_net(X)

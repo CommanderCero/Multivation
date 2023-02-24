@@ -67,7 +67,8 @@ class NHeadSAC:
         update_frequency: int,
         target_network_frequency: int,
         save_model_frequency: int,
-        writer: SummaryWriter
+        writer: SummaryWriter,
+        model_folder: str
     ):
         start_time = time.time()
         obs = envs.reset()
@@ -119,8 +120,7 @@ class NHeadSAC:
                         
             if global_step % save_model_frequency == 0:
                 print(f"{global_step}: Saving agent...")
-                os.makedirs(f"{writer.get_logdir()}/models")
-                self.save(f"{writer.get_logdir()}/models/model_{global_step // save_model_frequency}.torch")
+                self.save(f"{model_folder}/model_{global_step // save_model_frequency}.torch")
     
     def learn(self, data: ReplayBufferSamples, writer: SummaryWriter=None, logging_step=None):
         generator_metrics = {}
