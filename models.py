@@ -230,7 +230,7 @@ class NHeadCritic(nn.Module):
         ])
 
     def forward(self, x):
-        x = self.body(x / 255.0)
+        x = self.body(x)
         head_qvals = [head(x) for head in self.heads]
         return torch.stack(head_qvals, dim=0)
 
@@ -263,7 +263,7 @@ class NHeadActor(nn.Module):
         ])
 
     def forward(self, x):
-        x = self.body(x / 255.0)
+        x = self.body(x)
         head_logits = [head(x) for head in self.heads]
         return torch.stack(head_logits, dim=0)
 

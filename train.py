@@ -13,6 +13,13 @@ from nhead_sac import NHeadSAC
 import gym
 import numpy as np
 import torch
+from stable_baselines3.common.atari_wrappers import (
+    ClipRewardEnv,
+    EpisodicLifeEnv,
+    FireResetEnv,
+    MaxAndSkipEnv,
+    NoopResetEnv,
+)
 from stable_baselines3.common.buffers import ReplayBuffer
 from torch.utils.tensorboard import SummaryWriter
 
@@ -79,17 +86,35 @@ def parse_reward_sources(yaml_node, device, env: gym.vector.SyncVectorEnv):
         reward_sources.append(new_source)
     return reward_sources
 
+class NormalizeObservation(gym.ObservationWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        self.observation_space = gym.spaces.Box(0, 1, shape=env.observation_space.shape, dtype=np.float32)
+        
+    def observation(self, observation):
+        return observation.astype(np.float32) / 255.
+
 def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
         env = gym.make(env_id)
         env = gym.wrappers.RecordEpisodeStatistics(env)
-        env = gym.wrappers.AtariPreprocessing(env, frame_skip=4, terminal_on_life_loss=True, scale_obs=True)
+        if capture_video:
+            if idx == 0:
+                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
+        env = NoopResetEnv(env, noop_max=30)
+        env = MaxAndSkipEnv(env, skip=4)
+        env = EpisodicLifeEnv(env)
+        if "FIRE" in env.unwrapped.get_action_meanings():
+            env = FireResetEnv(env)
+        env = ClipRewardEnv(env)
+        env = gym.wrappers.ResizeObservation(env, (84, 84))
+        env = gym.wrappers.GrayScaleObservation(env)
+        env = NormalizeObservation(env)
         env = gym.wrappers.FrameStack(env, 4)
         env.seed(seed)
         env.action_space.seed(seed)
         env.observation_space.seed(seed)
         return env
-
     return thunk
 
 if __name__ == "__main__":
