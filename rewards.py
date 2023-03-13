@@ -152,7 +152,7 @@ class RNDRewardGenerator(RewardGenerator):
         next_observations = samples.next_observations
         if self.use_obs_norm:
             self.obs_moments.update(next_observations.cpu().numpy())
-            next_observations = ((next_observations - self.obs_moments.mean) / np.sqrt(self.obs_moments.var)).clip(-5, 5)
+            next_observations = ((next_observations - torch.from_numpy(self.obs_moments.mean).to(self.device)) / torch.from_numpy(np.sqrt(self.obs_moments.var)).to(self.device)).clip(-5, 5)
         
         # Compute rewards
         random_embedding = self.random_net(samples.next_observations)
@@ -173,7 +173,7 @@ class RNDRewardGenerator(RewardGenerator):
     def update(self, samples: ReplayBufferSamples) -> Dict[str, float]:
         next_observations = samples.next_observations
         if self.use_obs_norm:
-            next_observations = (next_observations - self.obs_moments.mean) / np.sqrt(self.obs_moments.var).clip(-5, 5)
+            next_observations = ((next_observations - torch.from_numpy(self.obs_moments.mean).to(self.device)) / torch.from_numpy(np.sqrt(self.obs_moments.var)).to(self.device)).clip(-5, 5)
         
         # Do not train random network
         with torch.no_grad():
