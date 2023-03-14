@@ -7,9 +7,11 @@ import torch.optim as optim
 import gym
 import time
 import numpy as np
-import os
 from stable_baselines3.common.buffers import ReplayBuffer, ReplayBufferSamples
 from torch.utils.tensorboard import SummaryWriter
+
+import logging
+logger = logging.getLogger(__name__)
 
 from typing import Callable, List, Union, Optional
 
@@ -88,7 +90,7 @@ class NHeadSAC:
             # TRY NOT TO MODIFY: record rewards for plotting purposes
             for info in infos:
                 if "episode" in info.keys():
-                    print(f"global_step={global_step}, episodic_return={info['episode']['r']}")
+                    logger.info(f"global_step={global_step}, episodic_return={info['episode']['r']}")
                     writer.add_scalar("charts/episodic_return", info["episode"]["r"], global_step)
                     writer.add_scalar("charts/episodic_length", info["episode"]["l"], global_step)
                     break
@@ -109,7 +111,7 @@ class NHeadSAC:
                     data = self.memory.sample(batch_size)
                     if global_step % 100 == 0:
                         self.learn(data, writer=writer, logging_step=global_step)
-                        print("SPS:", int(global_step / (time.time() - start_time)))
+                        logger.info(f"SPS: {int(global_step / (time.time() - start_time))}")
                         writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
                     else:
                         self.learn(data)
@@ -119,7 +121,7 @@ class NHeadSAC:
                     self.update_target_networks()
                         
             if global_step % save_model_frequency == 0:
-                print(f"{global_step}: Saving agent...")
+                logger.info(f"{global_step}: Saving agent...")
                 self.save(f"{model_folder}/model_{global_step // save_model_frequency}.torch")
     
     def learn(self, data: ReplayBufferSamples, writer: SummaryWriter=None, logging_step=None):

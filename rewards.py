@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from typing import Dict
 
 class RewardGenerator(torch.nn.Module):
-    def __init__(self, device, reward_decay: float=0.99, use_dones: bool=True):
+    def __init__(self, device, state_shape, num_actions, reward_decay: float=0.99, use_dones: bool=True):
         super().__init__()
         
         self.reward_decay = reward_decay
@@ -35,24 +35,24 @@ class RewardGenerator(torch.nn.Module):
         """
         return {}
     
-    @classmethod
-    def from_config(cls, yaml_node, device, action_space: gym.spaces.Discrete, obs_space: gym.spaces.Box):
-        return cls(
-            device,
-            reward_decay=yaml_node["reward_decay"],
-            use_dones=yaml_node["use_dones"],
-        )
-    
 class ExtrinsicRewardGenerator(RewardGenerator):
-    def __init__(self, device, reward_decay: float=0.99, use_dones: bool=True):
-        super().__init__(device, reward_decay=reward_decay, use_dones=use_dones)
+    def __init__(self, device, state_shape, num_actions, reward_decay: float=0.99, use_dones: bool=True):
+        super().__init__(device, state_shape, num_actions, reward_decay=reward_decay, use_dones=use_dones)
     
     def generate_rewards(self, samples: ReplayBufferSamples) -> torch.Tensor:
         return samples.rewards
 
 class CuriosityRewardGenerator(RewardGenerator):
-    def __init__(self, device, state_shape, embedding_size, num_actions, learning_rate=0.0003, reward_decay: float=0.99, use_dones: bool=True):
-        super().__init__(device, reward_decay=reward_decay, use_dones=use_dones)
+    def __init__(self,
+             device, 
+             state_shape,
+             num_actions,
+             embedding_size = 128,
+             learning_rate=0.0003,
+             reward_decay: float=0.99,
+             use_dones: bool=True
+         ):
+        super().__init__(device, state_shape, num_actions, reward_decay=reward_decay, use_dones=use_dones)
         
         self.embedding_net = Conv2DEmbedding(state_shape, embedding_size).to(self.device)
         self.forward_model = OneHotForwardModelResiduals(embedding_size, 512, num_actions).to(self.device)
@@ -107,31 +107,19 @@ class CuriosityRewardGenerator(RewardGenerator):
             "inverse_fm_loss": inverse_fm_loss.cpu().item()
         }
     
-    @classmethod
-    def from_config(cls, yaml_node, device, action_space: gym.spaces.Discrete, obs_space: gym.spaces.Box):
-        return cls(
-            device,
-            state_shape=obs_space.shape,
-            num_actions=action_space.n,
-            embedding_size=yaml_node["embedding_size"],
-            learning_rate=yaml_node["learning_rate"],
-            reward_decay=yaml_node["reward_decay"],
-            use_dones=yaml_node["use_dones"],
-        )
-    
 class RNDRewardGenerator(RewardGenerator):
     def __init__(self,
             device,
             state_shape,
-            embedding_size,
             num_actions,
+            embedding_size=128,
             learning_rate=0.0003,
             reward_decay: float=0.99,
             use_dones: bool=True,
             use_reward_norm=True,
             use_obs_norm=True
         ):
-        super().__init__(device, reward_decay=reward_decay, use_dones=use_dones)
+        super().__init__(device, state_shape, num_actions, reward_decay=reward_decay, use_dones=use_dones)
         
         self.use_reward_norm = use_reward_norm
         self.use_obs_norm = use_obs_norm
@@ -188,17 +176,3 @@ class RNDRewardGenerator(RewardGenerator):
         return {
             "distillation_loss": distillation_loss
         }
-    
-    @classmethod
-    def from_config(cls, yaml_node, device, action_space: gym.spaces.Discrete, obs_space: gym.spaces.Box):
-        return cls(
-            device,
-            state_shape=obs_space.shape,
-            num_actions=action_space.n,
-            embedding_size=yaml_node["embedding_size"],
-            learning_rate=yaml_node["learning_rate"],
-            reward_decay=yaml_node["reward_decay"],
-            use_dones=yaml_node["use_dones"],
-            use_reward_norm=yaml_node["use_reward_norm"],
-            use_obs_norm=yaml_node["use_obs_norm"]
-        )

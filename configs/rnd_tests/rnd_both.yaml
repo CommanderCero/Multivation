@@ -1,8 +1,0 @@
-RewardSources:
-    - type: rnd
-      reward_decay: 0.99
-      use_dones: false
-      embedding_size: 128
-      learning_rate: 0.0003
-      use_reward_norm: true
-      use_obs_norm: true
