@@ -50,6 +50,8 @@ class NHeadSAC:
         assert len(self.reward_sources) == self.actor.num_heads, "The number of actor-heads do not match the number of reward generators."
         assert len(self.reward_sources) == self.critic_1.num_heads, "The number of critic-heads do not match the number of reward generators."
         self.num_heads = len(self.reward_sources)
+        self.current_head = np.random.randint(0, self.num_heads)
+        logger.info(f"Using {self.num_heads} heads")
         
         self.entropy_weight = entropy_weight
         self.autotune_entropy = autotune_entropy
@@ -68,6 +70,7 @@ class NHeadSAC:
         batch_size: int,
         update_frequency: int,
         target_network_frequency: int,
+        switch_head_frequency: int,
         save_model_frequency: int,
         writer: SummaryWriter,
         model_folder: str
@@ -81,7 +84,7 @@ class NHeadSAC:
                 actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
             else:
                 actions, _, _ = self.actor.get_action(torch.Tensor(obs).to(self.device))
-                actions = actions[0] # Head 0
+                actions = actions[self.current_head]
                 actions = actions.detach().cpu().numpy()
     
             # TRY NOT TO MODIFY: execute the game and log data.
@@ -123,6 +126,11 @@ class NHeadSAC:
             if global_step % save_model_frequency == 0:
                 logger.info(f"{global_step}: Saving agent...")
                 self.save(f"{model_folder}/model_{global_step // save_model_frequency}.torch")
+        
+            if global_step % switch_head_frequency == 0:
+                self.current_head = np.random.randint(0, self.num_heads)
+                writer.add_scalar("charts/active_head", self.current_head, global_step)
+                
     
     def learn(self, data: ReplayBufferSamples, writer: SummaryWriter=None, logging_step=None):
         generator_metrics = {}

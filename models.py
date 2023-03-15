@@ -198,16 +198,12 @@ def layer_init(layer, bias_const=0.0):
     torch.nn.init.constant_(layer.bias, bias_const)
     return layer
 
-# ALGO LOGIC: initialize agent here:
-# NOTE: Sharing a CNN encoder between Actor and Critics is not recommended for SAC without stopping actor gradients
-# See the SAC+AE paper https://arxiv.org/abs/1910.01741 for more info
-# TL;DR The actor's gradients mess up the representation when using a joint encoder
 class NHeadCritic(nn.Module):
-    def __init__(self, num_heads, observation_shape, num_actions):
+    def __init__(self, num_heads, observation_shape, num_actions, share_body=False):
         super().__init__()
         self.num_heads = num_heads
         
-        self.body = nn.Sequential(
+        body_template = lambda: nn.Sequential(
             layer_init(nn.Conv2d(observation_shape[0], 32, kernel_size=8, stride=4)),
             nn.ReLU(),
             layer_init(nn.Conv2d(32, 64, kernel_size=4, stride=2)),
@@ -216,18 +212,36 @@ class NHeadCritic(nn.Module):
             nn.Flatten(),
             nn.ReLU(),
         )
+        
+        if share_body:
+            self.body = body_template()
 
-        with torch.inference_mode():
-            output_dim = self.body(torch.zeros(1, *observation_shape)).shape[1]
+            with torch.inference_mode():
+                output_dim = self.body(torch.zeros(1, *observation_shape)).shape[1]
 
-        self.heads = nn.ModuleList([
-            nn.Sequential(
-                layer_init(nn.Linear(output_dim, 512)),
-                nn.ReLU(),
-                layer_init(nn.Linear(512, num_actions))
-            )
-            for _ in range(num_heads)
-        ])
+            self.heads = nn.ModuleList([
+                nn.Sequential(
+                    layer_init(nn.Linear(output_dim, 512)),
+                    nn.ReLU(),
+                    layer_init(nn.Linear(512, num_actions))
+                )
+                for _ in range(num_heads)
+            ])
+        else:
+            self.body = nn.Identity()
+
+            with torch.inference_mode():
+                output_dim = body_template()(torch.zeros(1, *observation_shape)).shape[1]
+
+            self.heads = nn.ModuleList([
+                nn.Sequential(
+                    body_template(),
+                    layer_init(nn.Linear(output_dim, 512)),
+                    nn.ReLU(),
+                    layer_init(nn.Linear(512, num_actions))
+                )
+                for _ in range(num_heads)
+            ])
 
     def forward(self, x):
         x = self.body(x)
@@ -236,11 +250,11 @@ class NHeadCritic(nn.Module):
 
 
 class NHeadActor(nn.Module):
-    def __init__(self, num_heads, observation_shape, num_actions):
+    def __init__(self, num_heads, observation_shape, num_actions, share_body=False):
         super().__init__()
         self.num_heads = num_heads
         
-        self.body = nn.Sequential(
+        body_template = lambda: nn.Sequential(
             layer_init(nn.Conv2d(observation_shape[0], 32, kernel_size=8, stride=4)),
             nn.ReLU(),
             layer_init(nn.Conv2d(32, 64, kernel_size=4, stride=2)),
@@ -249,18 +263,36 @@ class NHeadActor(nn.Module):
             nn.Flatten(),
             nn.ReLU(),
         )
+        
+        if share_body:
+            self.body = body_template()
 
-        with torch.inference_mode():
-            output_dim = self.body(torch.zeros(1, *observation_shape)).shape[1]
+            with torch.inference_mode():
+                output_dim = self.body(torch.zeros(1, *observation_shape)).shape[1]
 
-        self.heads = nn.ModuleList([
-            nn.Sequential(
-                layer_init(nn.Linear(output_dim, 512)),
-                nn.ReLU(),
-                layer_init(nn.Linear(512, num_actions))
-            )
-            for _ in range(num_heads)
-        ])
+            self.heads = nn.ModuleList([
+                nn.Sequential(
+                    layer_init(nn.Linear(output_dim, 512)),
+                    nn.ReLU(),
+                    layer_init(nn.Linear(512, num_actions))
+                )
+                for _ in range(num_heads)
+            ])
+        else:
+            self.body = nn.Identity()
+
+            with torch.inference_mode():
+                output_dim = body_template()(torch.zeros(1, *observation_shape)).shape[1]
+
+            self.heads = nn.ModuleList([
+                nn.Sequential(
+                    body_template(),
+                    layer_init(nn.Linear(output_dim, 512)),
+                    nn.ReLU(),
+                    layer_init(nn.Linear(512, num_actions))
+                )
+                for _ in range(num_heads)
+            ])
 
     def forward(self, x):
         x = self.body(x)

@@ -19,7 +19,7 @@ from stable_baselines3.common.buffers import ReplayBuffer
 from torch.utils.tensorboard import SummaryWriter
 
 import hydra
-from config.train_config import TrainConfig
+from train_config import TrainConfig
 from omegaconf import OmegaConf
 
 import logging
@@ -74,8 +74,8 @@ def initialize_agent(cfg: TrainConfig, action_space, observation_space, device) 
         handle_timeout_termination=True,
     )
     
-    actor = NHeadActor(num_heads, observation_space.shape, action_space.n)
-    critic_template = lambda: NHeadCritic(num_heads, observation_space.shape, action_space.n)
+    actor = NHeadActor(num_heads, observation_space.shape, action_space.n, share_body=cfg.share_body)
+    critic_template = lambda: NHeadCritic(num_heads, observation_space.shape, action_space.n, share_body=cfg.share_body)
     
     agent = NHeadSAC(
         actor=actor, 
@@ -92,13 +92,13 @@ def initialize_agent(cfg: TrainConfig, action_space, observation_space, device) 
     )
     return agent
 
-@hydra.main(version_base="1.1", config_name="default")
+@hydra.main(version_base="1.1", config_path="config", config_name="extrinsic_curious_adventure")
 def main(cfg: TrainConfig):
     device = torch.device("cuda" if torch.cuda.is_available() and cfg.use_cuda else "cpu")
     logger.info(f"Using {device}")
     
     # Setup tensorboard logging
-    writer = SummaryWriter(f"./{cfg.run_name}")
+    writer = SummaryWriter("./")
     writer.add_text("config", OmegaConf.to_yaml(cfg))
     writer.add_text("device", str(device))
     # Setup model saving
@@ -122,6 +122,7 @@ def main(cfg: TrainConfig):
         batch_size=cfg.batch_size,
         update_frequency=cfg.update_frequency,
         target_network_frequency=cfg.target_update_frequency,
+        switch_head_frequency=cfg.switch_head_frequency,
         save_model_frequency=cfg.save_model_frequency,
         writer=writer,
         model_folder=model_folder

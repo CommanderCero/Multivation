@@ -27,7 +27,6 @@ class RNDRewardConfig(RewardGeneratorConfig):
 @dataclass
 class TrainConfig:
     experiment_name: str = "Experiment"
-    run_name: str = "${env_id}__${experiment_name}__${seed}__${now:%Y-%m-%d_%H-%M-%S.%f}"
     env_id: str = "PongNoFrameskip-v4"
     seed: int = 1
     use_cuda: bool = True
@@ -39,6 +38,7 @@ class TrainConfig:
     learning_starts: int = int(2e4)
     update_frequency: int = 4
     target_update_frequency: int = 8000
+    switch_head_frequency: int = 10000
     
     batch_size: int = 64
     learning_rate: float = 3e-4
@@ -48,5 +48,6 @@ class TrainConfig:
     autotune_entropy: bool = True
     alpha: float = 0.2
     target_entropy_scale: float = 0.89
+    share_body: bool = False
     
     reward_sources: Dict[str, RewardGeneratorConfig] = field(default_factory=lambda: {"extrinsic": ExtrinsicRewardConfig})
