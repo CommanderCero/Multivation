@@ -1,93 +1,138 @@
-import argparse
-import numpy as np
-import gym
+# docs and experiment results can be found at https://docs.cleanrl.dev/rl-algorithms/sac/#sac_ataripy
 import os
-import shutil
-
-import torch
-from torch.utils.tensorboard import SummaryWriter
+import random
 
 from models import NHeadActor, NHeadCritic
-from rewards import ExtrinsicRewardGenerator, NegativeOneRewardGenerator
-from discrete_multivation_sac import DiscreteMultivationSAC
-from memory import ReplayMemory
-import gym_utils
-from evaluation import MultivationAgentEvaluator
+from nhead_sac import NHeadSAC
+
+import gym
+import numpy as np
+import torch
+from stable_baselines3.common.atari_wrappers import (
+    ClipRewardEnv,
+    EpisodicLifeEnv,
+    FireResetEnv,
+    MaxAndSkipEnv,
+    NoopResetEnv,
+)
+from stable_baselines3.common.buffers import ReplayBuffer
+from torch.utils.tensorboard import SummaryWriter
+
+import hydra
+from train_config import TrainConfig
+from omegaconf import OmegaConf
+
+import logging
+logger = logging.getLogger(__name__)
+
+class NormalizeObservation(gym.ObservationWrapper):
+    def __init__(self, env):
+        super().__init__(env)
+        self.observation_space = gym.spaces.Box(0, 1, shape=env.observation_space.shape, dtype=np.float32)
         
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Trains a Multivation-SAC model")
-    parser.add_argument("-env", default="CartPole-v1", help="The name of the gym environment that the agent should learn to play.")
-    parser.add_argument("-num_envs", default=4, type=int, help="How many environments to run in parallel.")
-    parser.add_argument("-train_steps", default=1000000, type=int, help="The total amount of steps the agent can take in the environment.")
-    parser.add_argument("-evaluation_interval", default=10000, type=int, help="The amount of steps to take after which the agent will be evaluated.")
-    parser.add_argument("-memory_size", default=100000, type=int, help="The size of the replay memory that the agent uses.")
-    parser.add_argument("-log_folder", default="runs", help="Name of the folder where the tensorboard logs are stored.")
-    parser.add_argument("-experiment_name", default="experiment", help="Experiment name used for identifying logs in tensorboard.")
-    args = parser.parse_args()
+    def observation(self, observation):
+        return observation.astype(np.float32) / 255.
+
+def make_env(env_id, seed):
+    def thunk():
+        env = gym.make(env_id)
+        env = gym.wrappers.RecordEpisodeStatistics(env)
+        env = NoopResetEnv(env, noop_max=30)
+        env = MaxAndSkipEnv(env, skip=4)
+        env = EpisodicLifeEnv(env)
+        if "FIRE" in env.unwrapped.get_action_meanings():
+            env = FireResetEnv(env)
+        env = ClipRewardEnv(env)
+        env = gym.wrappers.ResizeObservation(env, (84, 84))
+        env = gym.wrappers.GrayScaleObservation(env)
+        env = NormalizeObservation(env)
+        env = gym.wrappers.FrameStack(env, 4)
+        env.seed(seed)
+        env.action_space.seed(seed)
+        env.observation_space.seed(seed)
+        return env
+    return thunk
+
+def enforce_deterministic_results(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
     
-    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-    print(f"Training on '{device}'")
+def initialize_agent(cfg: TrainConfig, action_space, observation_space, device) -> NHeadSAC:
+    reward_sources = [
+        hydra.utils.instantiate(source, device, observation_space.shape, action_space.n)
+        for _, source in cfg.reward_sources.items()
+    ]
+    num_heads = len(reward_sources)
     
-    # Setup logging
-    log_folder = f"{args.log_folder}/{args.experiment_name}"
-    if os.path.exists(log_folder):
-        shutil.rmtree(log_folder)
-    os.makedirs(log_folder)
+    rb = ReplayBuffer(
+        cfg.memory_size,
+        observation_space,
+        action_space,
+        device,
+        handle_timeout_termination=True,
+    )
     
-    logger = SummaryWriter(log_dir=log_folder)
+    actor = NHeadActor(num_heads, observation_space.shape, action_space.n, share_body=cfg.share_body)
+    critic_template = lambda: NHeadCritic(num_heads, observation_space.shape, action_space.n, share_body=cfg.share_body)
+    
+    agent = NHeadSAC(
+        actor=actor, 
+        critic_template=critic_template, 
+        reward_sources=reward_sources,
+        memory=rb,
+        num_actions=action_space.n,
+        entropy_weight=cfg.alpha,
+        autotune_entropy=cfg.autotune_entropy,
+        target_entropy_scale=cfg.target_entropy_scale,
+        polyak_weight=cfg.target_smoothing_coefficient,
+        learning_rate=cfg.learning_rate,
+        device=device
+    )
+    return agent
+
+@hydra.main(version_base="1.1", config_path="config", config_name="mixed_extrinsic_curious_pong.yaml")
+def main(cfg: TrainConfig):
+    device = torch.device("cuda" if torch.cuda.is_available() and cfg.use_cuda else "cpu")
+    logger.info(f"Using {device}")
+    
+    # Setup tensorboard logging
+    writer = SummaryWriter(hydra.core.hydra_config.HydraConfig.get()["runtime"]["output_dir"])
+    writer.add_text("config", OmegaConf.to_yaml(cfg))
+    writer.add_text("device", str(device))
+    # Setup model saving
+    model_folder = f"{writer.get_logdir()}/models"
+    os.makedirs(model_folder)
+    # Seeding
+    enforce_deterministic_results(cfg.seed)
     
     # Initialize environment
-    env = gym_utils.make_preprocessed_vec_env(args.env, args.num_envs, normalize_reward=False)
-    eval_env = gym_utils.make_preprocessed_vec_env(args.env, args.num_envs, normalize_reward=False)
-    assert isinstance(env.single_action_space, gym.spaces.Discrete), "This implementation of MultivationSAC only supports environments with discrete action spaces"
+    envs = gym.vector.SyncVectorEnv([make_env(cfg.env_id, cfg.seed)])
+    assert isinstance(envs.single_action_space, gym.spaces.Discrete), "Only a discrete action space is supported"
     
-    # Initialize Rewards
-    reward_sources = [
-        ExtrinsicRewardGenerator(),
-        #NegativeOneRewardGenerator()
-    ]
+    # Initialize agent
+    agent = initialize_agent(cfg, envs.single_action_space, envs.single_observation_space, device)
     
-    # Initialize Agent
-    num_actions = env.single_action_space.n
-    num_heads = len(reward_sources)
-    input_shape = env.single_observation_space.shape
-    head_layers = [64, num_actions]
-    if len(env.single_observation_space.shape) == 1:
-        actor = NHeadActor.create_pure_feedforward([*input_shape, 64, 64], num_heads, head_layers)
-        critic_template = lambda: NHeadCritic.create_pure_feedforward([*input_shape, 64, 64], num_heads, head_layers)
-    else:
-        embedding_size = 128
-        
-        actor = NHeadActor.create_conv(
-            input_shape=input_shape,
-            embedding_size=embedding_size,
-            conv_channels=[32,32,32,32],
-            body_layers=[],
-            num_heads=num_heads,
-            head_layers=head_layers
-        )
-        critic_template = lambda: NHeadCritic.create_conv(
-            input_shape=input_shape,
-            embedding_size=embedding_size,
-            conv_channels=[32,32,32,32],
-            body_layers=[],
-            num_heads=num_heads,
-            head_layers=head_layers
-        )
+    # Run Training
+    agent.train(
+        envs=envs,
+        total_timesteps=cfg.total_timesteps,
+        learning_starts=cfg.learning_starts,
+        batch_size=cfg.batch_size,
+        update_frequency=cfg.update_frequency,
+        target_network_frequency=cfg.target_update_frequency,
+        switch_head_frequency=cfg.switch_head_frequency,
+        save_model_frequency=cfg.save_model_frequency,
+        writer=writer,
+        model_folder=model_folder
+    )
     
-    memory = ReplayMemory(args.memory_size // args.num_envs, args.num_envs, env.single_observation_space, env.single_action_space)
-    agent = DiscreteMultivationSAC(actor, critic_template, reward_sources, memory, num_actions, device=device, autotune_entropy=True)
-    
-    # Train
-    evaluator = MultivationAgentEvaluator(agent, eval_env, logger, log_folder)
-    initialisation_steps = 20000
-    while agent.total_steps < args.train_steps:
-        agent.train(
-            env,
-            total_steps=args.evaluation_interval,
-            initialisation_steps=initialisation_steps,
-            logger=logger
-        )
-        initialisation_steps = max(initialisation_steps - args.evaluation_interval, 0)
-        
-        evaluator.evaluate()
+    # End
+    envs.close()
+    writer.close()
+
+if __name__ == "__main__":
+    cs = hydra.core.config_store.ConfigStore.instance()
+    cs.store(name="default", node=TrainConfig)
+    main()

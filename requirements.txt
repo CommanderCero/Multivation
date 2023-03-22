@@ -1,5 +1,4 @@
-numpy==1.24.1
-gym[atari,accept-rom-license]==0.26.2
-tensorboard
-opencv-python
-moviepy
+ale-py==0.7.4
+stable-baselines3[extra]
+gym==0.23.1
+pyyaml

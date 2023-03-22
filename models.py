@@ -1,26 +1,34 @@
-import numpy as np
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torch_utils import create_feedforward, create_conv
+import numpy as np
 
-from typing import List, Tuple
-from abc import ABC, abstractmethod
-
-def get_output_count(net: nn.Module, input_shape: tuple) -> int:
+def get_output_count(net: nn.Module, input_shape: tuple):
     with torch.no_grad():
         o = net(torch.zeros(1, *input_shape))
         return int(np.prod(o.size()))
 
 class Conv2DEmbedding(nn.Module):
-    def __init__(self, input_shape, embedding_size, conv_channels=[32, 32, 32, 32], linear_sizes=[], activation=nn.ReLU):
+    def __init__(self, input_shape, embedding_size, use_batch_norm=True):
         super().__init__()
+        conv_layers = []
+        conv2d_params = [(32, 8, 4), (64, 4, 2), (64, 3, 1)]
+        last_channels = input_shape[0]
+        for c, ks, s in conv2d_params:
+            conv_layers.append(nn.Conv2d(in_channels=last_channels, out_channels=c, kernel_size=ks, stride=s))
+            if use_batch_norm:
+                conv_layers.append(nn.BatchNorm2d(num_features=c))
+            conv_layers.append(nn.ReLU())
+            last_channels = c
         
-        self.conv_net = create_conv([input_shape[0], *conv_channels], activation=nn.ReLU)
+        self.conv_net = nn.Sequential(*conv_layers)
+        
         input_size = get_output_count(self.conv_net, input_shape)
-        self.out_net = create_feedforward([input_size, *linear_sizes, embedding_size], activation=nn.ReLU)
+        out_layers = [nn.Linear(input_size, embedding_size)]
+        if use_batch_norm:
+            out_layers.append(nn.BatchNorm1d(embedding_size))
+        self.out_net = nn.Sequential(*out_layers)
         
     def forward(self, X):
         X = self.conv_net(X)
@@ -28,83 +36,274 @@ class Conv2DEmbedding(nn.Module):
         X = self.out_net(X)
         return X
 
+class FMResidualBlock(nn.Module):
+    def __init__(self, hidden_size, num_actions):
+        super().__init__()
+        self.layer1 = nn.Linear(hidden_size + num_actions, hidden_size)
+        self.layer2 = nn.Linear(hidden_size + num_actions, hidden_size)
+        
+    def forward(self, x, actions):
+        res = torch.cat([x, actions], dim=1)
+        res = self.layer1(res)
+        res = F.relu(res)
+        
+        res = torch.cat([x, actions], dim=1)
+        res = self.layer1(res)
+        return x + res
+        
+
+class OneHotForwardModelResiduals(nn.Module):
+    '''
+    Implements a forward model that predicts the next state using discrete actions as input.
+    The actions are handled by using one-hot encoding.
+    '''
+    def __init__(self, embedding_size, hidden_size, num_actions):
+        super().__init__()
+        self.num_actions = num_actions
+        self.embedding_size = embedding_size
+        
+        self.inp_net = nn.Sequential(
+            nn.Linear(embedding_size + num_actions, hidden_size),
+            nn.ReLU()
+        )
+        self.residuals = nn.ModuleList([
+            FMResidualBlock(hidden_size, num_actions) for i in range(4)
+        ])
+        self.out_net = nn.Sequential(
+            nn.Linear(hidden_size + num_actions, embedding_size)
+        )
+    
+    def forward(self, states, actions):
+        '''
+        Predicts the next state from the given (state, action) pairs.
+        Assumptions:
+            states: [batch_size, embedding_size]
+            actions: [batch_size, 1]
+        '''
+        # [batch_size, 1, num_actions]
+        one_hot_actions = F.one_hot(actions.long(), num_classes=self.num_actions)
+        # [batch_size, num_actions]
+        one_hot_actions = one_hot_actions.squeeze(1)
+        
+        X = self.inp_net(torch.cat([states, one_hot_actions], dim=1))
+        for res_block in self.residuals:
+            X = res_block(X, one_hot_actions)
+        X = self.out_net(torch.cat([X, one_hot_actions], dim=1))
+        return X
+    
+    def compute_loss(self, states, actions, next_states):
+        '''
+        Computes a loss indicating how good this model is in predicting the next_state from (state, action) pairs.
+        The used loss is the Mean Squared Error between the real and predicted next_state.
+        Assumptions:
+            states: [batch_size, embedding_size]
+            actions: [batch_size, 1]
+            next_states: [batch_size, embedding_size]
+            
+        '''
+        predicted_next_states = self.forward(states, actions)
+        return F.mse_loss(predicted_next_states, next_states)
+
+class OneHotForwardModel(nn.Module):
+    '''
+    Implements a forward model that predicts the next state using discrete actions as input.
+    The actions are handled by using one-hot encoding.
+    '''
+    def __init__(self, embedding_size, num_actions):
+        super().__init__()
+        self.num_actions = num_actions
+        self.embedding_size = embedding_size
+        
+        self.state_predictor_net = nn.Sequential(
+            nn.Linear(self.embedding_size + self.num_actions, self.embedding_size * 2),
+            nn.ReLU(),
+            nn.Linear(self.embedding_size * 2, self.embedding_size)
+        )
+    
+    def forward(self, states, actions):
+        '''
+        Predicts the next state from the given (state, action) pairs.
+        Assumptions:
+            states: [batch_size, embedding_size]
+            actions: [batch_size, 1]
+        '''
+        # [batch_size, 1, num_actions]
+        one_hot_actions = F.one_hot(actions.long(), num_classes=self.num_actions)
+        # [batch_size, num_actions]
+        one_hot_actions = one_hot_actions.squeeze(1)
+        
+        # [batch_size, embedding_size + num_actions]
+        X = torch.cat([states, one_hot_actions], dim=1)
+        # [batch_size, embedding_size]
+        state_predictions = self.state_predictor_net(X)
+        return state_predictions
+    
+    def compute_loss(self, states, actions, next_states):
+        '''
+        Computes a loss indicating how good this model is in predicting the next_state from (state, action) pairs.
+        The used loss is the Mean Squared Error between the real and predicted next_state.
+        Assumptions:
+            states: [batch_size, embedding_size]
+            actions: [batch_size, 1]
+            next_states: [batch_size, embedding_size]
+            
+        '''
+        predicted_next_states = self.forward(states, actions)
+        return F.mse_loss(predicted_next_states, next_states)
+    
+class DiscreteActionPredictor(nn.Module):
+    def __init__(self, embedding_size, num_actions):
+        super().__init__()
+        self.num_actions = num_actions
+        self.embedding_size = embedding_size
+        
+        self.logits_net = nn.Sequential(
+            nn.Linear(self.embedding_size * 2, 512),
+            nn.ReLU(),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, self.num_actions)
+        )
+    
+    def forward(self, states, next_states):
+        '''
+        Predicts the executed actions from the given (state, next_state) pairs.
+        Returns logits for each possible action.
+        Assumptions:
+            states: [batch_size, embedding_size]
+            next_states: [batch_size, embedding_size]
+        '''
+        # [batch_size, embedding_size * 2]
+        X = torch.concat([states, next_states], dim=1)
+        # [batch_size, num_actions]
+        logits = self.logits_net(X)
+        return logits
+    
+    def compute_loss(self, states, next_states, actions):
+        '''
+        Computes a loss indicating how good this model is in predicting the given actions from (state, next_state) pairs.
+        The used loss is the cross-entropy loss between the real and predicted actions.
+        Assumptions:
+            states: [batch_size, embedding_size]
+            next_states: [batch_size, embedding_size]
+            actions: [batch_size, 1]
+        '''
+        logits = self.forward(states, next_states)
+        return F.cross_entropy(logits, actions.long().flatten())
+    
+def layer_init(layer, bias_const=0.0):
+    nn.init.kaiming_normal_(layer.weight)
+    torch.nn.init.constant_(layer.bias, bias_const)
+    return layer
+
 class NHeadCritic(nn.Module):
-    def __init__(self, body: nn.Module, heads: List[nn.Module]):
+    def __init__(self, num_heads, observation_shape, num_actions, share_body=False):
         super().__init__()
+        self.num_heads = num_heads
         
-        self.body = body
-        self.heads = nn.ModuleList(heads)
+        body_template = lambda: nn.Sequential(
+            layer_init(nn.Conv2d(observation_shape[0], 32, kernel_size=8, stride=4)),
+            nn.ReLU(),
+            layer_init(nn.Conv2d(32, 64, kernel_size=4, stride=2)),
+            nn.ReLU(),
+            layer_init(nn.Conv2d(64, 64, kernel_size=3, stride=1)),
+            nn.Flatten(),
+            nn.ReLU(),
+        )
         
-    def forward(self, states):
-        embedded_states = self.body(states)
-        q_values = [head(embedded_states) for head in self.heads]
-        q_values = torch.stack(q_values, dim=0)
-        return q_values
-    
-    def predict_head(self, states: torch.FloatTensor, head_index: int) -> torch.FloatTensor:
-        embedded_states = self.body(states)
-        q_values = self.heads[head_index](embedded_states)
-        return q_values
-    
-    @property
-    def num_heads(self):
-        return len(self.heads)
-    
-    @staticmethod
-    def create_pure_feedforward(body_layers, num_heads, head_layers, activation=nn.ReLU):
-        body = create_feedforward(body_layers, activation=activation)
-        heads = [create_feedforward(head_layers, activation=activation) for _ in range(num_heads)]
-        return NHeadCritic(body, heads)
-    
-    @staticmethod
-    def create_conv(input_shape, embedding_size, conv_channels, body_layers, num_heads, head_layers, activation=nn.ReLU):
-        body = Conv2DEmbedding(input_shape, embedding_size, conv_channels, body_layers)
-        heads = [create_feedforward([embedding_size, *head_layers], activation=activation) for _ in range(num_heads)]
-        return NHeadCritic(body, heads)
-    
+        if share_body:
+            self.body = body_template()
+
+            with torch.inference_mode():
+                output_dim = self.body(torch.zeros(1, *observation_shape)).shape[1]
+
+            self.heads = nn.ModuleList([
+                nn.Sequential(
+                    layer_init(nn.Linear(output_dim, 512)),
+                    nn.ReLU(),
+                    layer_init(nn.Linear(512, num_actions))
+                )
+                for _ in range(num_heads)
+            ])
+        else:
+            self.body = nn.Identity()
+
+            with torch.inference_mode():
+                output_dim = body_template()(torch.zeros(1, *observation_shape)).shape[1]
+
+            self.heads = nn.ModuleList([
+                nn.Sequential(
+                    body_template(),
+                    layer_init(nn.Linear(output_dim, 512)),
+                    nn.ReLU(),
+                    layer_init(nn.Linear(512, num_actions))
+                )
+                for _ in range(num_heads)
+            ])
+
+    def forward(self, x):
+        x = self.body(x)
+        head_qvals = [head(x) for head in self.heads]
+        return torch.stack(head_qvals, dim=0)
+
+
 class NHeadActor(nn.Module):
-    def __init__(self, body: nn.Module, heads: List[nn.Module]):
+    def __init__(self, num_heads, observation_shape, num_actions, share_body=False):
         super().__init__()
+        self.num_heads = num_heads
         
-        self.body = body
-        self.heads = nn.ModuleList(heads)
+        body_template = lambda: nn.Sequential(
+            layer_init(nn.Conv2d(observation_shape[0], 32, kernel_size=8, stride=4)),
+            nn.ReLU(),
+            layer_init(nn.Conv2d(32, 64, kernel_size=4, stride=2)),
+            nn.ReLU(),
+            layer_init(nn.Conv2d(64, 64, kernel_size=3, stride=1)),
+            nn.Flatten(),
+            nn.ReLU(),
+        )
         
-    def forward(self, states):
-        embedded_states = self.body(states)
-        logits = [head(embedded_states) for head in self.heads]
-        logits = torch.stack(logits, dim=0)
-        return logits
-    
-    def forward_head(self, states: torch.FloatTensor, head_index: int) -> torch.FloatTensor:
-        embedded_states = self.body(states)
-        logits = self.heads[head_index](embedded_states)
-        return logits
-    
-    def sample_actions(self, states: torch.FloatTensor) -> torch.LongTensor:
-        logits = self.forward(states)
-        action_dist = torch.distributions.Categorical(logits=logits)
-        actions = action_dist.sample()
-        return actions
-    
-    def get_action_probabilities(self, states: torch.FloatTensor) -> Tuple[torch.FloatTensor, torch.FloatTensor]:
-        logits = self.forward(states)
-        action_probs = F.softmax(logits, dim=-1)
-        log_action_probs = F.log_softmax(logits, dim=-1)
-        return action_probs, log_action_probs
-    
-    @property
-    def num_heads(self):
-        return len(self.heads)
-        
-    @staticmethod
-    def create_pure_feedforward(body_layers, num_heads, head_layers, activation=nn.ReLU):
-        body = create_feedforward(body_layers, activation=activation)
-        heads = [create_feedforward(head_layers, activation=activation) for _ in range(num_heads)]
-        return NHeadActor(body, heads)
-    
-    @staticmethod
-    def create_conv(input_shape, embedding_size, conv_channels, body_layers, num_heads, head_layers, activation=nn.ReLU):
-        body = Conv2DEmbedding(input_shape, embedding_size, conv_channels, body_layers)
-        heads = [create_feedforward([embedding_size, *head_layers], activation=activation) for _ in range(num_heads)]
-        return NHeadActor(body, heads)
-    
+        if share_body:
+            self.body = body_template()
+
+            with torch.inference_mode():
+                output_dim = self.body(torch.zeros(1, *observation_shape)).shape[1]
+
+            self.heads = nn.ModuleList([
+                nn.Sequential(
+                    layer_init(nn.Linear(output_dim, 512)),
+                    nn.ReLU(),
+                    layer_init(nn.Linear(512, num_actions))
+                )
+                for _ in range(num_heads)
+            ])
+        else:
+            self.body = nn.Identity()
+
+            with torch.inference_mode():
+                output_dim = body_template()(torch.zeros(1, *observation_shape)).shape[1]
+
+            self.heads = nn.ModuleList([
+                nn.Sequential(
+                    body_template(),
+                    layer_init(nn.Linear(output_dim, 512)),
+                    nn.ReLU(),
+                    layer_init(nn.Linear(512, num_actions))
+                )
+                for _ in range(num_heads)
+            ])
+
+    def forward(self, x):
+        x = self.body(x)
+        head_logits = [head(x) for head in self.heads]
+        return torch.stack(head_logits, dim=0)
+
+    def get_action(self, x):
+        logits = self.forward(x)
+        policy_dist = torch.distributions.Categorical(logits=logits)
+        action = policy_dist.sample()
+        # Action probabilities for calculating the adapted soft-Q loss
+        action_probs = policy_dist.probs
+        log_prob = F.log_softmax(logits, dim=-1)
+        return action, log_prob, action_probs
