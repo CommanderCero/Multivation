@@ -4,7 +4,7 @@ hydra:
     job:
         chdir: false
 
-experiment_name: "MixedExtrinsicCuriousBankHeist"
+experiment_name: "ExtrinsicCuriousBankHeist"
 env_id: "BankHeistNoFrameskip-v4"
 seed: 1
 use_cuda: true
