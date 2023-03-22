@@ -1,15 +1,13 @@
-import gym
-import numpy as np
+from models import Conv2DEmbedding, DiscreteActionPredictor, OneHotForwardModelResiduals
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 from stable_baselines3.common.buffers import ReplayBufferSamples
 from stable_baselines3.common.running_mean_std import RunningMeanStd
 
-from models import Conv2DEmbedding, OneHotForwardModel, DiscreteActionPredictor, OneHotForwardModelResiduals
-
-from abc import ABC, abstractmethod
-from typing import Dict
+from abc import abstractmethod
+from typing import Dict, List, Callable
 
 class RewardGenerator(torch.nn.Module):
     def __init__(self, device, state_shape, num_actions, reward_decay: float=0.99, use_dones: bool=True):
@@ -34,7 +32,56 @@ class RewardGenerator(torch.nn.Module):
         Returns a dictionary of metrics that measure the training progress.
         """
         return {}
+
+class MixedRewardGenerator(RewardGenerator):
+    def __init__(self,
+        device,
+        state_shape,
+        num_actions,
+        generators: Dict[str, RewardGenerator],
+        weights: Dict[str, float],
+        reward_decay: float=0.99,
+        use_dones: bool=True
+    ):
+        super().__init__(device, state_shape, num_actions, reward_decay=reward_decay, use_dones=use_dones)
+        self.generators = generators
+        self.weights = weights
+        
+    def generate_rewards(self, samples: ReplayBufferSamples) -> torch.Tensor:
+        keys = list(self.generators.keys())
+        total_rewards = self.generators[keys[0]].generate_rewards(samples) * self.weights[keys[0]]
+        for key in keys[1:]:
+            total_rewards += self.generators[key].generate_rewards(samples) * self.weights[key]
+        return total_rewards
     
+    def update(self, samples: ReplayBufferSamples) -> Dict[str, float]:
+        """
+        Updates the reward generator using the samples from the environment.
+        Returns a dictionary of metrics that measure the training progress.
+        """
+        metrics = {}
+        for name, source in self.generators.items():
+            local_metrics = source.update(samples)
+            metrics.update({f"{name}.{key}" : value for key, value in local_metrics.items()})
+        return metrics
+    
+    @staticmethod
+    def from_config(
+        device,
+        state_shape,
+        num_actions,
+        generators: Dict[str, Callable],
+        weights: Dict[str, float],
+        reward_decay: float=0.99,
+        use_dones: bool=True
+    ):
+        """
+        Method for instantiating a MixedRewardGenerator from a hydra config.
+        All elements of the generator dict have to be marked _partial_, so that we can pass additional initilization arguments at runtime.
+        """
+        generators = {key : source(device, state_shape, num_actions) for key, source in generators.items()}
+        return MixedRewardGenerator(device, state_shape, num_actions, generators, weights, reward_decay, use_dones)
+
 class ExtrinsicRewardGenerator(RewardGenerator):
     def __init__(self, device, state_shape, num_actions, reward_decay: float=0.99, use_dones: bool=True):
         super().__init__(device, state_shape, num_actions, reward_decay=reward_decay, use_dones=use_dones)
@@ -73,16 +120,16 @@ class CuriosityRewardGenerator(RewardGenerator):
         state_embeddings = self.embedding_net(samples.observations)
         next_state_embeddings = self.embedding_net(samples.next_observations)
         next_state_predictions = self.forward_model(state_embeddings, samples.actions)
-        rewards = torch.mean((next_state_predictions - next_state_embeddings) ** 2, dim=-1)
+        rewards = torch.mean((next_state_predictions - next_state_embeddings) ** 2, dim=-1, keepdim=True)
         
         # Normalize
         reward_ts = np.empty(rewards.shape)
-        for i, r in enumerate(rewards):
+        for i, r in enumerate(rewards.cpu().numpy()):
             self.reward_estimation = 0.99 * self.reward_estimation + r
             reward_ts[i] = self.reward_estimation
         self.reward_moments.update(reward_ts)
         
-        return rewards / np.sqrt(self.reward_moments.var)
+        return rewards / np.sqrt(self.reward_moments.var[0])
         
     def update(self, samples: ReplayBufferSamples) -> Dict[str, float]:
         """

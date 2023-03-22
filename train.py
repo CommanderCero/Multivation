@@ -92,13 +92,13 @@ def initialize_agent(cfg: TrainConfig, action_space, observation_space, device) 
     )
     return agent
 
-@hydra.main(version_base="1.1", config_path="config", config_name="extrinsic_curious_adventure")
+@hydra.main(version_base="1.1", config_path="config", config_name="mixed_extrinsic_curious_pong.yaml")
 def main(cfg: TrainConfig):
     device = torch.device("cuda" if torch.cuda.is_available() and cfg.use_cuda else "cpu")
     logger.info(f"Using {device}")
     
     # Setup tensorboard logging
-    writer = SummaryWriter("./")
+    writer = SummaryWriter(hydra.core.hydra_config.HydraConfig.get()["runtime"]["output_dir"])
     writer.add_text("config", OmegaConf.to_yaml(cfg))
     writer.add_text("device", str(device))
     # Setup model saving

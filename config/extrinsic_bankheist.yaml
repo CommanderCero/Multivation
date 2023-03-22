@@ -1,9 +1,11 @@
 hydra:
     run:
         dir: "./runs/${env_id}__${experiment_name}__${seed}__${now:%Y-%m-%d_%H-%M-%S.%f}"
+    job:
+        chdir: false
 
-experiment_name: "ExtrinsicCuriousMontezuma"
-env_id: "MontezumaRevengeNoFrameskip-v4"
+experiment_name: "ExtrinsicBankHeist"
+env_id: "BankHeistNoFrameskip-v4"
 seed: 1
 use_cuda: true
 
@@ -26,15 +28,7 @@ alpha: 0.2 # Redundant due to autotune_entropy=True
 target_entropy_scale: 0.89
 
 reward_sources:
-  extrinsic:
-    _target_: "rewards.ExtrinsicRewardGenerator"
-    reward_decay: 0.99
-    use_dones: true
-  curiosity:
-    _target_: "rewards.CuriosityRewardGenerator"
-    reward_decay: 0.99
-    use_dones: false
-    embedding_size: 128
-    learning_rate: 0.0003
-  
-    
+    extrinsic:
+        _target_: "rewards.ExtrinsicRewardGenerator"
+        reward_decay: 0.99
+        use_dones: true

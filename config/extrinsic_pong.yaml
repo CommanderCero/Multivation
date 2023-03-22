@@ -1,9 +1,11 @@
 hydra:
     run:
         dir: "./runs/${env_id}__${experiment_name}__${seed}__${now:%Y-%m-%d_%H-%M-%S.%f}"
+    job:
+        chdir: false
 
-experiment_name: "ExtrinsicMontezuma"
-env_id: "MontezumaRevengeNoFrameskip-v4"
+experiment_name: "ExtrinsicPong"
+env_id: "PongNoFrameskip-v4"
 seed: 1
 use_cuda: true
 
@@ -26,9 +28,7 @@ alpha: 0.2 # Redundant due to autotune_entropy=True
 target_entropy_scale: 0.89
 
 reward_sources:
-  extrinsic:
-    _target_: "rewards.ExtrinsicRewardGenerator"
-    reward_decay: 0.99
-    use_dones: true
-  
-    
+    extrinsic:
+        _target_: "rewards.ExtrinsicRewardGenerator"
+        reward_decay: 0.99
+        use_dones: true
